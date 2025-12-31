@@ -1,5 +1,6 @@
 import javax.swing.*;
 import javax.swing.border.TitledBorder;
+import javax.swing.text.AbstractDocument;
 import java.awt.*;
 import java.io.*;
 import java.time.LocalDateTime;
@@ -301,78 +302,59 @@ public class AdminPanel extends JFrame {
 
     private JPanel createAlertsPanel() {
         JPanel panel = new JPanel(new BorderLayout());
-        if (darkMode) panel.setBackground(new Color(40, 40, 40));
 
+        // --- 1. Setup the Form Grid ---
         JPanel settingsPanel = new JPanel(new GridLayout(0, 2, 10, 10));
         settingsPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
-        if (darkMode) settingsPanel.setBackground(new Color(40, 40, 40));
 
-        // Large deposit threshold
+        // Define Fonts (Using ThemeManager constants if available, or defaulting)
+        Font labelFont = new Font("SansSerif", Font.BOLD, 14);
+        Font fieldFont = new Font("SansSerif", Font.PLAIN, 14);
+
+        // -- Large Deposit Threshold --
         JLabel depositLabel = new JLabel("Large Deposit Threshold ($):");
-        depositLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        if (darkMode) depositLabel.setForeground(Color.WHITE);
+        depositLabel.setFont(labelFont);
 
         depositField = new JTextField(String.valueOf(LARGE_DEPOSIT_THRESHOLD));
-        depositField.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        if (darkMode) {
-            depositField.setBackground(new Color(60, 60, 60));
-            depositField.setForeground(Color.WHITE);
-            depositField.setCaretColor(Color.WHITE);
-        }
+        depositField.setFont(fieldFont);
+        // Apply Decimal Filter (Money)
+        ((AbstractDocument) depositField.getDocument()).setDocumentFilter(new DecimalInputFilter());
 
-        // Large withdrawal threshold
+        // -- Large Withdrawal Threshold --
         JLabel withdrawalLabel = new JLabel("Large Withdrawal Threshold ($):");
-        withdrawalLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        if (darkMode) withdrawalLabel.setForeground(Color.WHITE);
+        withdrawalLabel.setFont(labelFont);
 
         withdrawalField = new JTextField(String.valueOf(LARGE_WITHDRAWAL_THRESHOLD));
-        withdrawalField.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        if (darkMode) {
-            withdrawalField.setBackground(new Color(60, 60, 60));
-            withdrawalField.setForeground(Color.WHITE);
-            withdrawalField.setCaretColor(Color.WHITE);
-        }
+        withdrawalField.setFont(fieldFont);
+        // Apply Decimal Filter (Money)
+        ((AbstractDocument) withdrawalField.getDocument()).setDocumentFilter(new DecimalInputFilter());
 
-        // Frequent transaction count
+        // -- Frequent Transaction Count --
         JLabel freqCountLabel = new JLabel("Frequent Transaction Count:");
-        freqCountLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        if (darkMode) freqCountLabel.setForeground(Color.WHITE);
+        freqCountLabel.setFont(labelFont);
 
         freqCountField = new JTextField(String.valueOf(FREQUENT_TRANSACTION_COUNT));
-        freqCountField.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        if (darkMode) {
-            freqCountField.setBackground(new Color(60, 60, 60));
-            freqCountField.setForeground(Color.WHITE);
-            freqCountField.setCaretColor(Color.WHITE);
-        }
+        freqCountField.setFont(fieldFont);
+        // Apply Integer Filter (Whole numbers only)
+        ((AbstractDocument) freqCountField.getDocument()).setDocumentFilter(new IntegerInputFilter());
 
-        // Time period for frequent transactions
+        // -- Time Window --
         JLabel timeWindowLabel = new JLabel("Time Window (hours):");
-        timeWindowLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        if (darkMode) timeWindowLabel.setForeground(Color.WHITE);
+        timeWindowLabel.setFont(labelFont);
 
         timeWindowField = new JTextField(String.valueOf(FREQUENT_TRANSACTION_HOURS));
-        timeWindowField.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        if (darkMode) {
-            timeWindowField.setBackground(new Color(60, 60, 60));
-            timeWindowField.setForeground(Color.WHITE);
-            timeWindowField.setCaretColor(Color.WHITE);
-        }
+        timeWindowField.setFont(fieldFont);
+        // Apply Integer Filter (Whole numbers only)
+        ((AbstractDocument) timeWindowField.getDocument()).setDocumentFilter(new IntegerInputFilter());
 
-        // Email notification
+        // -- Email Notification --
         JLabel emailLabel = new JLabel("Email for Notifications:");
-        emailLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        if (darkMode) emailLabel.setForeground(Color.WHITE);
+        emailLabel.setFont(labelFont);
 
-        emailField = new JTextField("admin@fancybank.com");
-        emailField.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        if (darkMode) {
-            emailField.setBackground(new Color(60, 60, 60));
-            emailField.setForeground(Color.WHITE);
-            emailField.setCaretColor(Color.WHITE);
-        }
+        emailField = new JTextField("admin@fancybank.com"); // Usually loaded from prefs
+        emailField.setFont(fieldFont);
 
-        // Add all components to settings panel
+        // Add components to the grid
         settingsPanel.add(depositLabel);
         settingsPanel.add(depositField);
         settingsPanel.add(withdrawalLabel);
@@ -384,47 +366,74 @@ public class AdminPanel extends JFrame {
         settingsPanel.add(emailLabel);
         settingsPanel.add(emailField);
 
-        // Create test alert button
+        // --- 2. Test Alert Button Area ---
         JPanel testPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
-        if (darkMode) testPanel.setBackground(new Color(40, 40, 40));
-
-        SmoothButton testButton = new SmoothButton("Test Alert Notification", brandBlue, brandBlue, brandBlue.darker(), new Font("SansSerif", Font.BOLD, 14));
+        SmoothButton testButton = new SmoothButton(
+                "Test Alert Notification",
+                brandBlue,
+                brandBlue,
+                brandBlue.darker(),
+                new Font("SansSerif", Font.BOLD, 14)
+        );
         testButton.addActionListener(e -> showTestAlert());
         testPanel.add(testButton);
 
-        // Save settings button
+        // --- 3. Save Button Area ---
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        if (darkMode) buttonPanel.setBackground(new Color(40, 40, 40));
+        SmoothButton saveButton = new SmoothButton(
+                "Save Settings",
+                brandBlue,
+                brandBlue,
+                brandBlue.darker(),
+                new Font("SansSerif", Font.BOLD, 14)
+        );
 
-        SmoothButton saveButton = new SmoothButton("Save Settings", brandBlue, brandBlue, brandBlue.darker(), new Font("SansSerif", Font.BOLD, 14));
         saveButton.addActionListener(e -> {
             try {
-                LARGE_DEPOSIT_THRESHOLD = Double.parseDouble(depositField.getText().trim());
-                LARGE_WITHDRAWAL_THRESHOLD = Double.parseDouble(withdrawalField.getText().trim());
-                FREQUENT_TRANSACTION_COUNT = Integer.parseInt(freqCountField.getText().trim());
-                FREQUENT_TRANSACTION_HOURS = Integer.parseInt(timeWindowField.getText().trim());
+                // Because we used DocumentFilters, these parses are much safer now
+                // But we still catch exceptions just in case of empty strings
+                String depText = depositField.getText().trim();
+                String withText = withdrawalField.getText().trim();
+                String countText = freqCountField.getText().trim();
+                String hourText = timeWindowField.getText().trim();
 
-                // Save settings to a file
+                if (depText.isEmpty() || withText.isEmpty() || countText.isEmpty() || hourText.isEmpty()) {
+                    JOptionPane.showMessageDialog(panel, "Fields cannot be empty.", "Invalid Input", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+
+                LARGE_DEPOSIT_THRESHOLD = Double.parseDouble(depText);
+                LARGE_WITHDRAWAL_THRESHOLD = Double.parseDouble(withText);
+                FREQUENT_TRANSACTION_COUNT = Integer.parseInt(countText);
+                FREQUENT_TRANSACTION_HOURS = Integer.parseInt(hourText);
+
                 saveAlertSettings();
-
                 JOptionPane.showMessageDialog(panel, "Alert settings saved successfully.", "Settings Saved", JOptionPane.INFORMATION_MESSAGE);
+
             } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(panel, "Please enter valid numbers for all thresholds.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(panel, "Error parsing values. Please check your inputs.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
             }
         });
-
         buttonPanel.add(saveButton);
 
-        // Layout adjustments
+        // --- 4. Final Assembly ---
         JPanel centerWrapper = new JPanel();
         centerWrapper.setLayout(new BoxLayout(centerWrapper, BoxLayout.Y_AXIS));
-        centerWrapper.setBackground(darkMode ? new Color(40, 40, 40) : Color.WHITE);
         centerWrapper.add(settingsPanel);
         centerWrapper.add(testPanel);
 
-        panel.add(new JLabel("Configure Alert Thresholds", SwingConstants.CENTER), BorderLayout.NORTH);
+        // Title for the panel
+        JLabel header = new JLabel("Configure Alert Thresholds", SwingConstants.CENTER);
+        header.setFont(new Font("SansSerif", Font.BOLD, 16));
+        header.setBorder(BorderFactory.createEmptyBorder(10, 0, 10, 0));
+
+        panel.add(header, BorderLayout.NORTH);
         panel.add(centerWrapper, BorderLayout.CENTER);
         panel.add(buttonPanel, BorderLayout.SOUTH);
+
+        // --- 5. Apply Theme ---
+        // This replaces all the manual "if (darkMode) setBackground..." calls
+        ThemeManager.applyTheme(panel, darkMode);
 
         return panel;
     }
@@ -464,17 +473,15 @@ public class AdminPanel extends JFrame {
     }
 
     private void refreshData() {
-        // Clear and reload data
-        usersModel.clear();
-        loadAllUsers();
-        loadAllTransactions();
-        checkForSuspiciousActivity();
+        // Disable the button to prevent double-clicking while loading
+        refreshButton.setEnabled(false);
 
-        statusLabel.setText("Data refreshed at " +
-                LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        // Show a wait cursor
+        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+        statusLabel.setText("Starting background refresh...");
 
-        JOptionPane.showMessageDialog(this, "Admin panel data has been refreshed.",
-                "Data Refreshed", JOptionPane.INFORMATION_MESSAGE);
+        // Execute the SwingWorker
+        new DataRefreshWorker().execute();
     }
 
     private void loadAllUsers() {
@@ -777,6 +784,134 @@ public class AdminPanel extends JFrame {
                     viewportView.setBackground(new Color(60, 60, 60));
                     viewportView.setForeground(Color.WHITE);
                 }
+            }
+        }
+    }
+
+    //
+    private class DataRefreshWorker extends SwingWorker<DataRefreshWorker.RefreshResult, String> {
+
+        // Container for the data we collect in the background
+        class RefreshResult {
+            List<String> users;
+            Map<String, List<TransactionRecord>> transactions;
+            String alertReport;
+
+            RefreshResult(List<String> users, Map<String, List<TransactionRecord>> transactions, String alertReport) {
+                this.users = users;
+                this.transactions = transactions;
+                this.alertReport = alertReport;
+            }
+        }
+
+        @Override
+        protected RefreshResult doInBackground() throws Exception {
+            publish("Fetching user list...");
+            List<String> loadedUsers = UserManager.getAllUsers();
+
+            publish("Loading transaction histories...");
+            Map<String, List<TransactionRecord>> loadedTransactions = new HashMap<>();
+
+            // Load transactions for each user (previously done on UI thread)
+            int progress = 0;
+            for (String username : loadedUsers) {
+                publish("Processing data for: " + username);
+                List<TransactionRecord> userTransactions = new ArrayList<>();
+                File historyFile = new File(username + "_history.txt");
+
+                if (historyFile.exists()) {
+                    try (BufferedReader reader = new BufferedReader(new FileReader(historyFile))) {
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            if (line.trim().isEmpty()) continue;
+                            TransactionRecord record = TransactionRecord.fromString(line);
+                            if (record != null) {
+                                userTransactions.add(record);
+                            }
+                        }
+                    }
+                }
+                // Sort: newest first
+                userTransactions.sort(Comparator.comparing(TransactionRecord::getTimestampDate).reversed());
+                loadedTransactions.put(username, userTransactions);
+
+                // Artificial delay to demonstrate responsiveness (remove in production)
+                // Thread.sleep(50);
+            }
+
+            publish("Analyzing for suspicious activity...");
+            // Re-implement the check logic here to run in background
+            StringBuilder alertText = new StringBuilder();
+            // (Logic adapted from your original checkForSuspiciousActivity method)
+            for (String username : loadedTransactions.keySet()) {
+                List<TransactionRecord> txs = loadedTransactions.get(username);
+
+                // Check thresholds (using the static variables from AdminPanel)
+                for (TransactionRecord record : txs) {
+                    if (record.getType().equals("Deposit") && record.getAmount() >= LARGE_DEPOSIT_THRESHOLD) {
+                        alertText.append(String.format("ALERT: Large deposit of $%,.2f by %s on %s\n",
+                                record.getAmount(), username, record.getTimestamp()));
+                    }
+                    if (record.getType().equals("Withdrawal") && record.getAmount() >= LARGE_WITHDRAWAL_THRESHOLD) {
+                        alertText.append(String.format("ALERT: Large withdrawal of $%,.2f by %s on %s\n",
+                                record.getAmount(), username, record.getTimestamp()));
+                    }
+                }
+                // Check frequency logic...
+                if (txs.size() >= FREQUENT_TRANSACTION_COUNT) {
+                    LocalDateTime cutoff = LocalDateTime.now().minusHours(FREQUENT_TRANSACTION_HOURS);
+                    long recentCount = txs.stream().filter(r -> r.getTimestampDate().isAfter(cutoff)).count();
+                    if (recentCount >= FREQUENT_TRANSACTION_COUNT) {
+                        alertText.append(String.format("ALERT: Frequent activity detected - %d transactions by %s in last %d hours\n",
+                                recentCount, username, FREQUENT_TRANSACTION_HOURS));
+                    }
+                }
+            }
+
+            return new RefreshResult(loadedUsers, loadedTransactions, alertText.toString());
+        }
+
+        @Override
+        protected void process(List<String> chunks) {
+            // Updates the status label while the background task runs
+            String latestStatus = chunks.get(chunks.size() - 1);
+            statusLabel.setText(latestStatus);
+        }
+
+        @Override
+        protected void done() {
+            try {
+                // Retrieve the final result safely
+                RefreshResult result = get();
+
+                // 1. Update Users List
+                usersModel.clear();
+                for (String user : result.users) {
+                    usersModel.addElement(user);
+                }
+
+                // 2. Update Transactions Map
+                allTransactions = result.transactions;
+
+                // 3. Handle Alerts
+                if (result.alertReport.length() > 0) {
+                    activityLog.append("\n--- SUSPICIOUS ACTIVITY REPORT ---\n");
+                    activityLog.append(result.alertReport);
+                    activityLog.append("--------------------------------\n");
+                    showAlertNotification(result.alertReport);
+                }
+
+                // 4. UI Finalization
+                statusLabel.setText("Data refreshed at " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")));
+                refreshButton.setEnabled(true); // Re-enable the button
+                setCursor(Cursor.getDefaultCursor());
+
+                JOptionPane.showMessageDialog(AdminPanel.this, "Data refresh complete.", "Success", JOptionPane.INFORMATION_MESSAGE);
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                statusLabel.setText("Error refreshing data.");
+                JOptionPane.showMessageDialog(AdminPanel.this, "Error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             }
         }
     }

@@ -1,4 +1,5 @@
 import javax.swing.*;
+import javax.swing.text.AbstractDocument;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.*;
@@ -157,6 +158,9 @@ public class BankAppGui extends JFrame {
         amountField.setFont(new Font("SansSerif", Font.PLAIN, 14));
         amountPanel.add(amountField, BorderLayout.CENTER);
 
+        ((AbstractDocument) amountField.getDocument()).setDocumentFilter(new DecimalInputFilter());
+
+        amountPanel.add(amountField, BorderLayout.CENTER);
         SmoothButton depositBtn = new SmoothButton("Deposit Funds", brandBlue, brandBlue.darker(), Color.BLACK, new Font("SansSerif", Font.BOLD, 14));
         SmoothButton withdrawBtn = new SmoothButton("Withdraw Funds", brandGold, brandGold.darker(), Color.BLACK, new Font("SansSerif", Font.BOLD, 14));
 
@@ -268,30 +272,18 @@ public class BankAppGui extends JFrame {
         JOptionPane.showMessageDialog(this, message, "Transaction Error", JOptionPane.ERROR_MESSAGE);
     }
 
+    // In BankAppGui.java
+
     private void applyTheme() {
-        Color bg = darkMode ? darkBG : lightBG;
-        Color fg = darkMode ? darkFG : lightFG;
+        // 1. Use the manager to style the whole window
+        ThemeManager.applyTheme(this.getContentPane(), darkMode);
 
-        // Apply theme to all components
-        applyThemeToContainer(getContentPane(), bg, fg);
-
-        // Special handling for specific components
-        if (historyArea != null) {
-            historyArea.setBackground(darkMode ? new Color(30, 30, 30) : new Color(250, 250, 250));
-            historyArea.setForeground(darkMode ? new Color(200, 200, 200) : new Color(10, 10, 10));
-            historyArea.setCaretColor(fg);
-        }
-
-        if (chartPanel != null) {
-            chartPanel.setDarkMode(darkMode);
-            chartPanel.repaint();
-        }
-
-        // Update the balance label color
+        // 2. Handle special components that need brand colors
         if (balanceLabel != null) {
-            balanceLabel.setForeground(darkMode ? brandGold : brandBlue);
+            balanceLabel.setForeground(darkMode ? ThemeManager.BRAND_GOLD : ThemeManager.BRAND_BLUE);
         }
 
+        // 3. Refresh the UI
         SwingUtilities.updateComponentTreeUI(this);
     }
 
