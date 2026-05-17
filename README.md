@@ -60,7 +60,7 @@ The application combines a sleek FlatLaf-based interface with secure local authe
 ### Clone The Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/FancyBank.git
+git clone https://github.com/TryfonGav/FancyBank.git
 cd FancyBank
 ```
 
