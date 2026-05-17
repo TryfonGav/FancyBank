@@ -1,45 +1,72 @@
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.text.NumberFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class TransactionRecord {
-    private String type; // Deposit or Withdrawal
-    private double amount;
-    private LocalDateTime timestamp;
+    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final Pattern LOG_PATTERN = Pattern.compile(
+            "^\\[(?<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2})]\\s+" +
+                    "(?<type>Deposit|Withdrawal):\\s+\\$(?<amount>[0-9,]+(?:\\.[0-9]{1,2})?)" +
+                    "(?:\\s+-\\s+Balance:\\s+\\$(?<balance>[0-9,]+(?:\\.[0-9]{1,2})?))?$"
+    );
 
-    private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private final String type;
+    private final BigDecimal amount;
+    private final LocalDateTime timestamp;
+    private final BigDecimal balanceAfter;
 
-    public TransactionRecord(String type, double amount, LocalDateTime timestamp) {
+    public TransactionRecord(String type, BigDecimal amount, LocalDateTime timestamp, BigDecimal balanceAfter) {
+        if (!"Deposit".equals(type) && !"Withdrawal".equals(type)) {
+            throw new IllegalArgumentException("Unsupported transaction type.");
+        }
         this.type = type;
-        this.amount = amount;
-        this.timestamp = timestamp;
+        this.amount = money(amount);
+        this.timestamp = timestamp == null ? LocalDateTime.now() : timestamp;
+        this.balanceAfter = balanceAfter == null ? null : money(balanceAfter);
     }
 
-    public TransactionRecord(String type, double amount) {
-        this.type = type;
-        this.amount = amount;
-        this.timestamp = LocalDateTime.now();
+    public TransactionRecord(String type, BigDecimal amount, BigDecimal balanceAfter) {
+        this(type, amount, LocalDateTime.now(), balanceAfter);
     }
 
     public String getType() {
         return type;
     }
 
-    public double getAmount() {
+    public BigDecimal getAmount() {
         return amount;
     }
 
     public String getTimestamp() {
-        return timestamp.format(formatter);
+        return timestamp.format(FORMATTER);
     }
 
     public LocalDateTime getTimestampDate() {
         return timestamp;
     }
 
+    public Optional<BigDecimal> getBalanceAfter() {
+        return Optional.ofNullable(balanceAfter);
+    }
+
+    public String toLogLine() {
+        if (balanceAfter == null) {
+            return String.format("[%s] %s: %s", getTimestamp(), type, formatMoney(amount));
+        }
+        return String.format("[%s] %s: %s - Balance: %s",
+                getTimestamp(), type, formatMoney(amount), formatMoney(balanceAfter));
+    }
+
     @Override
     public String toString() {
-        return String.format("[%s] %s: $%,.2f", getTimestamp(), type, amount);
+        return toLogLine();
     }
 
     public static TransactionRecord fromString(String line) {
@@ -47,71 +74,37 @@ public class TransactionRecord {
             return null;
         }
 
-        try {
-            line = line.trim();
-
-            // Expected format: "[2023-01-01 12:00:00] Deposit: $100.00 - Balance: $1000.00"
-            // or simpler format: "[2023-01-01 12:00:00] Deposit: $100.00"
-
-            // Find the timestamp part
-            if (!line.startsWith("[")) {
-                System.err.println("Line doesn't start with '[': " + line);
-                return null;
-            }
-
-            int endBracket = line.indexOf("]");
-            if (endBracket == -1 || endBracket <= 1) {
-                System.err.println("Cannot find closing ']' in line: " + line);
-                return null;
-            }
-
-            String timestampStr = line.substring(1, endBracket);
-            LocalDateTime timestamp;
-            try {
-                timestamp = LocalDateTime.parse(timestampStr, formatter);
-            } catch (DateTimeParseException e) {
-                System.err.println("Cannot parse timestamp '" + timestampStr + "': " + e.getMessage());
-                return null;
-            }
-
-            // Get the rest of the line after the timestamp
-            String rest = line.substring(endBracket + 1).trim();
-
-            // Find the colon that separates type from amount
-            int colonIndex = rest.indexOf(":");
-            if (colonIndex == -1) {
-                System.err.println("Cannot find ':' in transaction part: " + rest);
-                return null;
-            }
-
-            String type = rest.substring(0, colonIndex).trim();
-            String amountPart = rest.substring(colonIndex + 1).trim();
-
-            // Handle potential " - Balance: $xxx.xx" suffix
-            if (amountPart.contains(" - Balance:")) {
-                amountPart = amountPart.substring(0, amountPart.indexOf(" - Balance:")).trim();
-            }
-
-            // Remove $ sign and commas from amount
-            if (amountPart.startsWith("$")) {
-                amountPart = amountPart.substring(1);
-            }
-            amountPart = amountPart.replace(",", "");
-
-            double amount;
-            try {
-                amount = Double.parseDouble(amountPart);
-            } catch (NumberFormatException e) {
-                System.err.println("Cannot parse amount '" + amountPart + "': " + e.getMessage());
-                return null;
-            }
-
-            return new TransactionRecord(type, amount, timestamp);
-
-        } catch (Exception e) {
-            System.err.println("Unexpected error parsing transaction record: \"" + line + "\" - " + e.getMessage());
-            e.printStackTrace();
+        Matcher matcher = LOG_PATTERN.matcher(line.trim());
+        if (!matcher.matches()) {
             return null;
         }
+
+        try {
+            LocalDateTime timestamp = LocalDateTime.parse(matcher.group("timestamp"), FORMATTER);
+            BigDecimal amount = parseMoney(matcher.group("amount"));
+            String balanceText = matcher.group("balance");
+            BigDecimal balance = balanceText == null ? null : parseMoney(balanceText);
+            return new TransactionRecord(matcher.group("type"), amount, timestamp, balance);
+        } catch (DateTimeParseException | NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private static BigDecimal parseMoney(String value) {
+        return money(new BigDecimal(value.replace(",", "")));
+    }
+
+    private static BigDecimal money(BigDecimal value) {
+        if (value == null) {
+            throw new IllegalArgumentException("Money value cannot be null.");
+        }
+        return value.setScale(2, RoundingMode.HALF_EVEN);
+    }
+
+    private static String formatMoney(BigDecimal value) {
+        NumberFormat currency = NumberFormat.getCurrencyInstance(Locale.US);
+        currency.setMinimumFractionDigits(2);
+        currency.setMaximumFractionDigits(2);
+        return currency.format(money(value));
     }
 }

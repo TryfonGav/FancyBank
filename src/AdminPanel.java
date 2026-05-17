@@ -1,12 +1,27 @@
+import net.miginfocom.swing.MigLayout;
+
 import javax.swing.*;
-import javax.swing.border.TitledBorder;
 import javax.swing.text.AbstractDocument;
 import java.awt.*;
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.Reader;
+import java.io.Writer;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.text.NumberFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Properties;
 
 public class AdminPanel extends JFrame {
     private JList<String> usersList;
@@ -15,223 +30,143 @@ public class AdminPanel extends JFrame {
     private JButton refreshButton;
     private JButton alertSettingsButton;
     private DefaultListModel<String> usersModel;
-    private JScrollPane activityScrollPane;
     private JPanel transactionPanel;
     private JPanel chartPanel;
-    private boolean darkMode = true;
-    private final Color brandBlue = new Color(0, 102, 204);
-    private final Color brandGold = new Color(204, 153, 0);
-    private final Color warningColor = new Color(255, 102, 102);
-    private Map<String, List<TransactionRecord>> allTransactions;
     private JTabbedPane tabPane;
-
-    // Alert thresholds
-    private static double LARGE_DEPOSIT_THRESHOLD = 10000.0;
-    private static double LARGE_WITHDRAWAL_THRESHOLD = 5000.0;
-    private static int FREQUENT_TRANSACTION_COUNT = 5;
-    private static int FREQUENT_TRANSACTION_HOURS = 24;
-
     private JTextField depositField;
     private JTextField withdrawalField;
     private JTextField freqCountField;
     private JTextField timeWindowField;
     private JTextField emailField;
+    private Map<String, List<TransactionRecord>> allTransactions = new HashMap<>();
+
+    private final Color brandBlue = AppUi.BRAND_BLUE;
+    private final Color brandGold = AppUi.BRAND_GOLD;
+    private final Color warningColor = AppUi.DANGER;
+
+    private static BigDecimal LARGE_DEPOSIT_THRESHOLD = money("10000.00");
+    private static BigDecimal LARGE_WITHDRAWAL_THRESHOLD = money("5000.00");
+    private static int FREQUENT_TRANSACTION_COUNT = 5;
+    private static int FREQUENT_TRANSACTION_HOURS = 24;
 
     public AdminPanel(String adminUsername) {
         super("FancyBank Admin Panel - " + adminUsername);
         setSize(1000, 700);
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setLocationRelativeTo(null);
 
-        allTransactions = new HashMap<>();
-
-        loadAlertSettings();  // Load settings on startup before UI init
         initComponents();
-        loadAllUsers();
-        loadAllTransactions();
-        checkForSuspiciousActivity();
-
         setVisible(true);
+        refreshData(false);
     }
 
     private void initComponents() {
-        Container container = getContentPane();
-        container.setLayout(new BorderLayout());
-
-        // North panel: title and admin info
-        JPanel northPanel = new JPanel(new BorderLayout());
-        northPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 5, 10));
-        if (darkMode) northPanel.setBackground(new Color(40, 40, 40));
+        JPanel container = new JPanel(new MigLayout(
+                "fill, insets 18, gap 14",
+                "[grow, fill]",
+                "[][grow, fill][]"
+        ));
+        setContentPane(container);
 
         JLabel titleLabel = new JLabel("FancyBank™ Administration");
-        titleLabel.setFont(new Font("Serif", Font.BOLD, 28));
+        titleLabel.putClientProperty("FlatLaf.styleClass", "h1");
         titleLabel.setForeground(brandBlue);
 
-        JPanel titlePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        if (darkMode) titlePanel.setBackground(new Color(40, 40, 40));
-        titlePanel.add(titleLabel);
+        statusLabel = new JLabel("Preparing admin dashboard");
+        statusLabel.putClientProperty("FlatLaf.styleClass", "medium");
 
-        statusLabel = new JLabel("Monitoring for suspicious activity");
-        statusLabel.setFont(new Font("SansSerif", Font.ITALIC, 14));
-        if (darkMode) statusLabel.setForeground(Color.LIGHT_GRAY);
+        JPanel northPanel = new JPanel(new MigLayout("fillx, insets 0", "[][grow][]", "[]"));
+        northPanel.add(titleLabel);
+        northPanel.add(statusLabel, "right");
 
-        JPanel statusPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        if (darkMode) statusPanel.setBackground(new Color(40, 40, 40));
-        statusPanel.add(statusLabel);
-
-        northPanel.add(titlePanel, BorderLayout.WEST);
-        northPanel.add(statusPanel, BorderLayout.EAST);
-
-        // Center panel with tabbed interface
         tabPane = new JTabbedPane();
-        if (darkMode) {
-            tabPane.setBackground(new Color(50, 50, 50));
-            tabPane.setForeground(Color.WHITE);
-        }
+        tabPane.addTab("Users", null, createUsersPanel(), "Monitor registered users");
+        tabPane.addTab("Activity Log", null, createActivityPanel(), "View system activity");
+        tabPane.addTab("Alerts", null, createAlertsPanel(), "Configure alert thresholds");
 
-        // Users panel
-        JPanel usersPanel = createUsersPanel();
-        tabPane.addTab("Users", null, usersPanel, "Monitor registered users");
+        JPanel southPanel = new JPanel(new MigLayout("fillx, insets 0, gap 10", "[grow][][120!][120!][120!]", "[]"));
 
-        // Activity panel
-        JPanel activityPanel = createActivityPanel();
-        tabPane.addTab("Activity Log", null, activityPanel, "View system activity");
+        refreshButton = AppUi.primaryButton("Refresh");
+        refreshButton.addActionListener(e -> refreshData(true));
 
-        // Alerts panel
-        JPanel alertsPanel = createAlertsPanel();
-        tabPane.addTab("Alerts", null, alertsPanel, "Configure alert thresholds");
-
-        // South panel: controls
-        JPanel southPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        southPanel.setBorder(BorderFactory.createEmptyBorder(5, 10, 10, 10));
-        if (darkMode) southPanel.setBackground(new Color(40, 40, 40));
-
-        refreshButton = new SmoothButton("Refresh Data", brandBlue, brandBlue, brandBlue.darker(), new Font("SansSerif", Font.BOLD, 14));
-        refreshButton.addActionListener(e -> refreshData());
-
-        alertSettingsButton = new SmoothButton("Alert Settings", brandBlue, brandBlue, brandBlue.darker(), new Font("SansSerif", Font.BOLD, 14));
+        alertSettingsButton = AppUi.secondaryButton("Alerts");
         alertSettingsButton.addActionListener(e -> showAlertSettings());
 
-        SmoothButton closeButton = new SmoothButton("Close Panel", brandBlue, new Color(100, 100, 100), new Color(70, 70, 70), new Font("SansSerif", Font.BOLD, 14));
+        JButton closeButton = AppUi.secondaryButton("Close");
         closeButton.addActionListener(e -> dispose());
 
-        southPanel.add(refreshButton);
-        southPanel.add(alertSettingsButton);
-        southPanel.add(closeButton);
+        southPanel.add(new JLabel(), "growx");
+        southPanel.add(refreshButton, "growx");
+        southPanel.add(alertSettingsButton, "growx");
+        southPanel.add(closeButton, "growx");
 
-        // Add components to container
-        container.add(northPanel, BorderLayout.NORTH);
-        container.add(tabPane, BorderLayout.CENTER);
-        container.add(southPanel, BorderLayout.SOUTH);
-
-        // Apply dark mode to all components
-        if (darkMode) {
-            applyDarkMode(container);
-        }
+        container.add(northPanel, "growx, wrap");
+        container.add(tabPane, "grow, push, wrap");
+        container.add(southPanel, "growx");
     }
 
     private JPanel createUsersPanel() {
-        JPanel panel = new JPanel(new BorderLayout());
-        if (darkMode) panel.setBackground(new Color(40, 40, 40));
+        JPanel panel = new JPanel(new MigLayout(
+                "fill, insets 14, gap 14",
+                "[220::280, fill][grow, fill]",
+                "[grow, fill]"
+        ));
 
-        // Left side: user list
-        JPanel leftPanel = new JPanel(new BorderLayout());
-        leftPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 5));
-        if (darkMode) leftPanel.setBackground(new Color(40, 40, 40));
-
+        JPanel leftPanel = AppUi.card();
+        leftPanel.setLayout(new MigLayout("fill, insets 14", "[grow, fill]", "[][grow, fill]"));
         JLabel usersLabel = new JLabel("Registered Users:");
-        usersLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        if (darkMode) usersLabel.setForeground(Color.WHITE);
+        usersLabel.putClientProperty("FlatLaf.styleClass", "h4");
 
         usersModel = new DefaultListModel<>();
         usersList = new JList<>(usersModel);
-        usersList.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        if (darkMode) {
-            usersList.setBackground(new Color(60, 60, 60));
-            usersList.setForeground(Color.WHITE);
-        }
 
         JScrollPane usersScrollPane = new JScrollPane(usersList);
-        usersScrollPane.setPreferredSize(new Dimension(200, 500));
+        leftPanel.add(usersLabel, "wrap");
+        leftPanel.add(usersScrollPane, "grow, push");
 
-        leftPanel.add(usersLabel, BorderLayout.NORTH);
-        leftPanel.add(usersScrollPane, BorderLayout.CENTER);
+        JPanel rightPanel = new JPanel(new MigLayout("fill, insets 0, gap 14", "[grow, fill]", "[][grow, fill][160!]"));
 
-        // Right side: user details and transactions
-        JPanel rightPanel = new JPanel(new BorderLayout());
-        rightPanel.setBorder(BorderFactory.createEmptyBorder(10, 5, 10, 10));
-        if (darkMode) rightPanel.setBackground(new Color(40, 40, 40));
-
-        transactionPanel = new JPanel(new BorderLayout());
-        transactionPanel.setBorder(BorderFactory.createTitledBorder(BorderFactory.createEtchedBorder(),
-                "User Transactions", TitledBorder.DEFAULT_JUSTIFICATION,
-                TitledBorder.DEFAULT_POSITION,
-                new Font("SansSerif", Font.BOLD, 14),
-                darkMode ? Color.WHITE : Color.BLACK));
-        if (darkMode) transactionPanel.setBackground(new Color(40, 40, 40));
+        transactionPanel = AppUi.card();
+        transactionPanel.setLayout(new MigLayout("fill, insets 14", "[grow, fill]", "[][grow, fill]"));
+        transactionPanel.add(AppUi.sectionTitle("User Transactions"), "wrap");
 
         JTextArea transactionArea = new JTextArea();
         transactionArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
         transactionArea.setEditable(false);
-        if (darkMode) {
-            transactionArea.setBackground(new Color(60, 60, 60));
-            transactionArea.setForeground(Color.WHITE);
-            transactionArea.setCaretColor(Color.WHITE);
-        }
+        transactionPanel.add(new JScrollPane(transactionArea), "grow, push");
 
-        JScrollPane transactionScroll = new JScrollPane(transactionArea);
-        transactionPanel.add(transactionScroll, BorderLayout.CENTER);
+        chartPanel = AppUi.card();
+        chartPanel.setLayout(new MigLayout("fill, insets 14", "[grow, fill]", "[][grow, fill]"));
+        chartPanel.add(AppUi.sectionTitle("Activity Snapshot"), "wrap");
+        chartPanel.add(new JLabel("Select a user to inspect transaction velocity."), "grow");
 
-        chartPanel = new JPanel(new BorderLayout());
-        chartPanel.setBorder(BorderFactory.createTitledBorder(BorderFactory.createEtchedBorder(),
-                "Activity Chart", TitledBorder.DEFAULT_JUSTIFICATION,
-                TitledBorder.DEFAULT_POSITION,
-                new Font("SansSerif", Font.BOLD, 14),
-                darkMode ? Color.WHITE : Color.BLACK));
-        if (darkMode) chartPanel.setBackground(new Color(40, 40, 40));
-        chartPanel.setPreferredSize(new Dimension(400, 200));
-
-        JPanel userInfoPanel = new JPanel(new BorderLayout());
-        if (darkMode) userInfoPanel.setBackground(new Color(40, 40, 40));
-
+        JPanel userInfoPanel = AppUi.card();
+        userInfoPanel.setLayout(new MigLayout("fillx, insets 14", "[grow, fill]", "[]12[]"));
         JLabel userInfoLabel = new JLabel("Select a user to view details");
-        userInfoLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        if (darkMode) userInfoLabel.setForeground(Color.WHITE);
-        userInfoPanel.add(userInfoLabel, BorderLayout.NORTH);
+        userInfoLabel.putClientProperty("FlatLaf.styleClass", "h3");
+        userInfoPanel.add(userInfoLabel, "growx, wrap");
 
-        JPanel userStatsPanel = new JPanel(new GridLayout(3, 2, 10, 5));
-        if (darkMode) userStatsPanel.setBackground(new Color(40, 40, 40));
-
+        JPanel userStatsPanel = new JPanel(new MigLayout("fillx, insets 0, gap 10", "[][grow, right]", "[][][]"));
         JLabel balanceLabel = new JLabel("Current Balance:");
         JLabel balanceValue = new JLabel("$0.00");
         JLabel transCountLabel = new JLabel("Transaction Count:");
         JLabel transCountValue = new JLabel("0");
         JLabel lastLoginLabel = new JLabel("Last Activity:");
         JLabel lastLoginValue = new JLabel("N/A");
-
-        if (darkMode) {
-            balanceLabel.setForeground(Color.WHITE);
-            balanceValue.setForeground(brandGold);
-            transCountLabel.setForeground(Color.WHITE);
-            transCountValue.setForeground(Color.WHITE);
-            lastLoginLabel.setForeground(Color.WHITE);
-            lastLoginValue.setForeground(Color.WHITE);
-        }
+        balanceValue.setForeground(brandGold);
 
         userStatsPanel.add(balanceLabel);
-        userStatsPanel.add(balanceValue);
+        userStatsPanel.add(balanceValue, "growx, wrap");
         userStatsPanel.add(transCountLabel);
-        userStatsPanel.add(transCountValue);
+        userStatsPanel.add(transCountValue, "growx, wrap");
         userStatsPanel.add(lastLoginLabel);
-        userStatsPanel.add(lastLoginValue);
+        userStatsPanel.add(lastLoginValue, "growx");
+        userInfoPanel.add(userStatsPanel, "growx");
 
-        userInfoPanel.add(userStatsPanel, BorderLayout.CENTER);
+        rightPanel.add(userInfoPanel, "growx, wrap");
+        rightPanel.add(transactionPanel, "grow, push, wrap");
+        rightPanel.add(chartPanel, "growx");
 
-        rightPanel.add(userInfoPanel, BorderLayout.NORTH);
-        rightPanel.add(transactionPanel, BorderLayout.CENTER);
-        rightPanel.add(chartPanel, BorderLayout.SOUTH);
-
-        // Add user selection listener
         usersList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 String selectedUser = usersList.getSelectedValue();
@@ -241,480 +176,176 @@ public class AdminPanel extends JFrame {
             }
         });
 
-        // Add components to main panel
-        panel.add(leftPanel, BorderLayout.WEST);
-        panel.add(rightPanel, BorderLayout.CENTER);
-
+        panel.add(leftPanel, "grow, push");
+        panel.add(rightPanel, "grow, push");
         return panel;
     }
 
     private JPanel createActivityPanel() {
-        JPanel panel = new JPanel(new BorderLayout());
-        if (darkMode) panel.setBackground(new Color(40, 40, 40));
+        JPanel panel = new JPanel(new MigLayout("fill, insets 14, gap 14", "[grow, fill]", "[][grow, fill][]"));
 
-        JPanel topPanel = new JPanel(new BorderLayout());
-        if (darkMode) topPanel.setBackground(new Color(40, 40, 40));
-
+        JPanel topPanel = new JPanel(new MigLayout("fillx, insets 0", "[][grow][]", "[]"));
         JLabel activityLabel = new JLabel("System Activity Log");
-        activityLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
-        if (darkMode) activityLabel.setForeground(Color.WHITE);
+        activityLabel.putClientProperty("FlatLaf.styleClass", "h3");
 
         String[] filterOptions = {"All Activity", "Logins", "Deposits", "Withdrawals", "Alerts Only"};
         JComboBox<String> filterCombo = new JComboBox<>(filterOptions);
-        filterCombo.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        if (darkMode) {
-            filterCombo.setBackground(new Color(60, 60, 60));
-            filterCombo.setForeground(Color.WHITE);
-        }
 
-        JPanel filterPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        if (darkMode) filterPanel.setBackground(new Color(40, 40, 40));
+        JPanel filterPanel = new JPanel(new MigLayout("insets 0, gap 8", "[][]", "[]"));
         filterPanel.add(new JLabel("Filter:"));
         filterPanel.add(filterCombo);
 
-        topPanel.add(activityLabel, BorderLayout.WEST);
-        topPanel.add(filterPanel, BorderLayout.EAST);
+        topPanel.add(activityLabel);
+        topPanel.add(filterPanel, "right");
 
         activityLog = new JTextArea();
         activityLog.setEditable(false);
         activityLog.setFont(new Font("Monospaced", Font.PLAIN, 14));
-        if (darkMode) {
-            activityLog.setBackground(new Color(60, 60, 60));
-            activityLog.setForeground(Color.WHITE);
-            activityLog.setCaretColor(Color.WHITE);
-        }
 
-        activityScrollPane = new JScrollPane(activityLog);
-
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        if (darkMode) buttonPanel.setBackground(new Color(40, 40, 40));
-
-        SmoothButton exportButton = new SmoothButton("Export Log", brandBlue, brandBlue, brandBlue.darker(), new Font("SansSerif", Font.BOLD, 14));
+        JPanel buttonPanel = new JPanel(new MigLayout("fillx, insets 0", "[grow][]", "[]"));
+        JButton exportButton = AppUi.secondaryButton("Export Log");
         exportButton.addActionListener(e -> exportActivityLog());
+        buttonPanel.add(new JLabel(), "growx");
         buttonPanel.add(exportButton);
 
-        panel.add(topPanel, BorderLayout.NORTH);
-        panel.add(activityScrollPane, BorderLayout.CENTER);
-        panel.add(buttonPanel, BorderLayout.SOUTH);
-
+        panel.add(topPanel, "growx, wrap");
+        panel.add(new JScrollPane(activityLog), "grow, push, wrap");
+        panel.add(buttonPanel, "growx");
         return panel;
     }
 
     private JPanel createAlertsPanel() {
-        JPanel panel = new JPanel(new BorderLayout());
+        JPanel panel = new JPanel(new MigLayout("fill, insets 18, gap 14", "[grow, fill]", "[][grow, fill][]"));
 
-        // --- 1. Setup the Form Grid ---
-        JPanel settingsPanel = new JPanel(new GridLayout(0, 2, 10, 10));
-        settingsPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+        JPanel settingsPanel = AppUi.card();
+        settingsPanel.setLayout(new MigLayout("fillx, insets 18, gap 12", "[][grow, fill]", "[][][][][]"));
 
-        // Define Fonts (Using ThemeManager constants if available, or defaulting)
-        Font labelFont = new Font("SansSerif", Font.BOLD, 14);
-        Font fieldFont = new Font("SansSerif", Font.PLAIN, 14);
-
-        // -- Large Deposit Threshold --
         JLabel depositLabel = new JLabel("Large Deposit Threshold ($):");
-        depositLabel.setFont(labelFont);
-
-        depositField = new JTextField(String.valueOf(LARGE_DEPOSIT_THRESHOLD));
-        depositField.setFont(fieldFont);
-        // Apply Decimal Filter (Money)
+        depositField = new JTextField(LARGE_DEPOSIT_THRESHOLD.toPlainString());
         ((AbstractDocument) depositField.getDocument()).setDocumentFilter(new DecimalInputFilter());
 
-        // -- Large Withdrawal Threshold --
         JLabel withdrawalLabel = new JLabel("Large Withdrawal Threshold ($):");
-        withdrawalLabel.setFont(labelFont);
-
-        withdrawalField = new JTextField(String.valueOf(LARGE_WITHDRAWAL_THRESHOLD));
-        withdrawalField.setFont(fieldFont);
-        // Apply Decimal Filter (Money)
+        withdrawalField = new JTextField(LARGE_WITHDRAWAL_THRESHOLD.toPlainString());
         ((AbstractDocument) withdrawalField.getDocument()).setDocumentFilter(new DecimalInputFilter());
 
-        // -- Frequent Transaction Count --
         JLabel freqCountLabel = new JLabel("Frequent Transaction Count:");
-        freqCountLabel.setFont(labelFont);
-
         freqCountField = new JTextField(String.valueOf(FREQUENT_TRANSACTION_COUNT));
-        freqCountField.setFont(fieldFont);
-        // Apply Integer Filter (Whole numbers only)
         ((AbstractDocument) freqCountField.getDocument()).setDocumentFilter(new IntegerInputFilter());
 
-        // -- Time Window --
         JLabel timeWindowLabel = new JLabel("Time Window (hours):");
-        timeWindowLabel.setFont(labelFont);
-
         timeWindowField = new JTextField(String.valueOf(FREQUENT_TRANSACTION_HOURS));
-        timeWindowField.setFont(fieldFont);
-        // Apply Integer Filter (Whole numbers only)
         ((AbstractDocument) timeWindowField.getDocument()).setDocumentFilter(new IntegerInputFilter());
 
-        // -- Email Notification --
         JLabel emailLabel = new JLabel("Email for Notifications:");
-        emailLabel.setFont(labelFont);
+        emailField = new JTextField("admin@fancybank.com");
 
-        emailField = new JTextField("admin@fancybank.com"); // Usually loaded from prefs
-        emailField.setFont(fieldFont);
-
-        // Add components to the grid
         settingsPanel.add(depositLabel);
-        settingsPanel.add(depositField);
+        settingsPanel.add(depositField, "growx, wrap");
         settingsPanel.add(withdrawalLabel);
-        settingsPanel.add(withdrawalField);
+        settingsPanel.add(withdrawalField, "growx, wrap");
         settingsPanel.add(freqCountLabel);
-        settingsPanel.add(freqCountField);
+        settingsPanel.add(freqCountField, "growx, wrap");
         settingsPanel.add(timeWindowLabel);
-        settingsPanel.add(timeWindowField);
+        settingsPanel.add(timeWindowField, "growx, wrap");
         settingsPanel.add(emailLabel);
-        settingsPanel.add(emailField);
+        settingsPanel.add(emailField, "growx");
 
-        // --- 2. Test Alert Button Area ---
-        JPanel testPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
-        SmoothButton testButton = new SmoothButton(
-                "Test Alert Notification",
-                brandBlue,
-                brandBlue,
-                brandBlue.darker(),
-                new Font("SansSerif", Font.BOLD, 14)
-        );
+        JButton testButton = AppUi.secondaryButton("Test Alert Notification");
         testButton.addActionListener(e -> showTestAlert());
-        testPanel.add(testButton);
 
-        // --- 3. Save Button Area ---
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        SmoothButton saveButton = new SmoothButton(
-                "Save Settings",
-                brandBlue,
-                brandBlue,
-                brandBlue.darker(),
-                new Font("SansSerif", Font.BOLD, 14)
-        );
+        JPanel buttonPanel = new JPanel(new MigLayout("fillx, insets 0, gap 10", "[grow][][140!]", "[]"));
+        JButton saveButton = AppUi.primaryButton("Save Settings");
+        saveButton.addActionListener(e -> saveSettingsFromFields(panel));
+        buttonPanel.add(new JLabel(), "growx");
+        buttonPanel.add(testButton);
+        buttonPanel.add(saveButton, "growx");
 
-        saveButton.addActionListener(e -> {
-            try {
-                // Because we used DocumentFilters, these parses are much safer now
-                // But we still catch exceptions just in case of empty strings
-                String depText = depositField.getText().trim();
-                String withText = withdrawalField.getText().trim();
-                String countText = freqCountField.getText().trim();
-                String hourText = timeWindowField.getText().trim();
-
-                if (depText.isEmpty() || withText.isEmpty() || countText.isEmpty() || hourText.isEmpty()) {
-                    JOptionPane.showMessageDialog(panel, "Fields cannot be empty.", "Invalid Input", JOptionPane.WARNING_MESSAGE);
-                    return;
-                }
-
-                LARGE_DEPOSIT_THRESHOLD = Double.parseDouble(depText);
-                LARGE_WITHDRAWAL_THRESHOLD = Double.parseDouble(withText);
-                FREQUENT_TRANSACTION_COUNT = Integer.parseInt(countText);
-                FREQUENT_TRANSACTION_HOURS = Integer.parseInt(hourText);
-
-                saveAlertSettings();
-                JOptionPane.showMessageDialog(panel, "Alert settings saved successfully.", "Settings Saved", JOptionPane.INFORMATION_MESSAGE);
-
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(panel, "Error parsing values. Please check your inputs.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
-            }
-        });
-        buttonPanel.add(saveButton);
-
-        // --- 4. Final Assembly ---
-        JPanel centerWrapper = new JPanel();
-        centerWrapper.setLayout(new BoxLayout(centerWrapper, BoxLayout.Y_AXIS));
-        centerWrapper.add(settingsPanel);
-        centerWrapper.add(testPanel);
-
-        // Title for the panel
         JLabel header = new JLabel("Configure Alert Thresholds", SwingConstants.CENTER);
-        header.setFont(new Font("SansSerif", Font.BOLD, 16));
-        header.setBorder(BorderFactory.createEmptyBorder(10, 0, 10, 0));
+        header.putClientProperty("FlatLaf.styleClass", "h3");
 
-        panel.add(header, BorderLayout.NORTH);
-        panel.add(centerWrapper, BorderLayout.CENTER);
-        panel.add(buttonPanel, BorderLayout.SOUTH);
-
-        // --- 5. Apply Theme ---
-        // This replaces all the manual "if (darkMode) setBackground..." calls
-        ThemeManager.applyTheme(panel, darkMode);
-
+        panel.add(header, "growx, wrap");
+        panel.add(settingsPanel, "growx, pushy, wrap");
+        panel.add(buttonPanel, "growx");
         return panel;
     }
 
     private void updateUserDetails(String username, JTextArea transactionArea, JLabel balanceValue, JLabel transCountValue, JLabel lastLoginValue) {
-        System.out.println("DEBUG: Updating user details for: " + username);
-
-        // Update transaction history
         transactionArea.setText("");
         List<TransactionRecord> transactions = allTransactions.getOrDefault(username, new ArrayList<>());
-
-        System.out.println("DEBUG: Found " + transactions.size() + " transactions for " + username);
 
         if (transactions.isEmpty()) {
             transactionArea.setText("No transaction history available for this user.");
         } else {
-            // Transactions sorted newest first; display newest first
             for (TransactionRecord record : transactions) {
-                transactionArea.append(record.toString() + "\n");
+                transactionArea.append(record.toString() + System.lineSeparator());
             }
         }
 
-        // Update user statistics
-        double balance = UserManager.getBalance(username);
-        System.out.println("DEBUG: Balance for " + username + ": " + balance);
-
-        balanceValue.setText(String.format("$%,.2f", balance));
+        balanceValue.setText(formatCurrency(UserManager.getBalance(username)));
+        balanceValue.setForeground(brandGold);
         transCountValue.setText(String.valueOf(transactions.size()));
-
-        // Get last activity time
-        if (!transactions.isEmpty()) {
-            TransactionRecord lastTransaction = transactions.get(0); // first is newest
-            lastLoginValue.setText(lastTransaction.getTimestamp());
-        } else {
-            lastLoginValue.setText("No activity");
-        }
+        lastLoginValue.setText(transactions.isEmpty() ? "No activity" : transactions.get(0).getTimestamp());
     }
 
-    private void refreshData() {
-        // Disable the button to prevent double-clicking while loading
+    private void refreshData(boolean notifyOnCompletion) {
         refreshButton.setEnabled(false);
-
-        // Show a wait cursor
         setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
         statusLabel.setText("Starting background refresh...");
-
-        // Execute the SwingWorker
-        new DataRefreshWorker().execute();
+        new DataRefreshWorker(notifyOnCompletion).execute();
     }
 
-    private void loadAllUsers() {
-        System.out.println("DEBUG: Loading all users...");
-
-        // Get all users from UserManager
-        List<String> users = UserManager.getAllUsers();
-        System.out.println("DEBUG: Found " + users.size() + " users: " + users);
-
-        for (String user : users) {
-            usersModel.addElement(user);
-        }
-    }
-
-    private void loadAllTransactions() {
-        System.out.println("DEBUG: Loading all transactions...");
-        allTransactions.clear();
-
-        // Get all users
-        List<String> users = UserManager.getAllUsers();
-        System.out.println("DEBUG: Loading transactions for users: " + users);
-
-        // Load transactions for each user
-        for (String username : users) {
-            List<TransactionRecord> userTransactions = new ArrayList<>();
-
-            File historyFile = new File(username + "_history.txt");
-            System.out.println("DEBUG: Checking for file: " + historyFile.getAbsolutePath() + " - exists: " + historyFile.exists());
-
-            if (historyFile.exists()) {
-                try (BufferedReader reader = new BufferedReader(new FileReader(historyFile))) {
-                    String line;
-                    int lineCount = 0;
-                    while ((line = reader.readLine()) != null) {
-                        lineCount++;
-                        line = line.trim();
-                        if (line.isEmpty()) continue;
-
-                        System.out.println("DEBUG: Parsing line " + lineCount + " for " + username + ": " + line);
-
-                        // Parse transaction record from line
-                        try {
-                            TransactionRecord record = TransactionRecord.fromString(line);
-                            if (record != null) {
-                                userTransactions.add(record);
-                                System.out.println("DEBUG: Successfully parsed: " + record);
-                            } else {
-                                System.out.println("DEBUG: Failed to parse line: " + line);
-                            }
-                        } catch (Exception e) {
-                            System.err.println("DEBUG: Error parsing transaction line '" + line + "': " + e.getMessage());
-                            e.printStackTrace();
-                        }
-                    }
-                    System.out.println("DEBUG: Loaded " + userTransactions.size() + " transactions for " + username);
-                } catch (IOException e) {
-                    System.err.println("Error reading transaction history for " + username + ": " + e.getMessage());
-                    e.printStackTrace();
-                }
-            } else {
-                System.out.println("DEBUG: No history file found for " + username);
-            }
-
-            // Sort transactions by timestamp (newest first)
-            userTransactions.sort(Comparator.comparing(TransactionRecord::getTimestampDate).reversed());
-
-            allTransactions.put(username, userTransactions);
-        }
-
-        System.out.println("DEBUG: Total transactions loaded: " + allTransactions.size() + " users");
-    }
-
-    private void checkForSuspiciousActivity() {
-        StringBuilder alertText = new StringBuilder();
-
-        for (String username : allTransactions.keySet()) {
-            List<TransactionRecord> transactions = allTransactions.get(username);
-
-            // Check for large deposits
-            for (TransactionRecord record : transactions) {
-                if (record.getType().equals("Deposit") && record.getAmount() >= LARGE_DEPOSIT_THRESHOLD) {
-                    String alert = String.format("ALERT: Large deposit of $%,.2f by %s on %s\n",
-                            record.getAmount(), username, record.getTimestamp());
-                    alertText.append(alert);
-                }
-
-                // Check for large withdrawals
-                if (record.getType().equals("Withdrawal") && record.getAmount() >= LARGE_WITHDRAWAL_THRESHOLD) {
-                    String alert = String.format("ALERT: Large withdrawal of $%,.2f by %s on %s\n",
-                            record.getAmount(), username, record.getTimestamp());
-                    alertText.append(alert);
-                }
-            }
-
-            // Check for frequent transactions
-            if (transactions.size() >= FREQUENT_TRANSACTION_COUNT) {
-                // Get transactions in the last FREQUENT_TRANSACTION_HOURS
-                LocalDateTime cutoff = LocalDateTime.now().minusHours(FREQUENT_TRANSACTION_HOURS);
-                int recentCount = 0;
-
-                for (TransactionRecord record : transactions) {
-                    if (record.getTimestampDate().isAfter(cutoff)) {
-                        recentCount++;
-                    }
-                }
-
-                if (recentCount >= FREQUENT_TRANSACTION_COUNT) {
-                    String alert = String.format("ALERT: Frequent activity detected - %d transactions by %s in the last %d hours\n",
-                            recentCount, username, FREQUENT_TRANSACTION_HOURS);
-                    alertText.append(alert);
-                }
-            }
-        }
-
-        // Display alerts in activity log
-        if (alertText.length() > 0) {
-            activityLog.append("--- SUSPICIOUS ACTIVITY REPORT ---\n");
-            activityLog.append(alertText.toString());
-            activityLog.append("--------------------------------\n\n");
-
-            // Show notification to admin
-            showAlertNotification(alertText.toString());
-        }
-    }
-
-    private void showAlertNotification(String alertText) {
-        JDialog alertDialog = new JDialog(this, "Security Alert", true);
-        alertDialog.setSize(500, 300);
-        alertDialog.setLocationRelativeTo(this);
-
-        JPanel alertPanel = new JPanel(new BorderLayout());
-        alertPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        if (darkMode) {
-            alertPanel.setBackground(new Color(50, 0, 0));
-        } else {
-            alertPanel.setBackground(new Color(255, 240, 240));
-        }
-
-        JLabel alertIcon = new JLabel("⚠️");
-        alertIcon.setFont(new Font("Dialog", Font.BOLD, 48));
-        alertIcon.setForeground(warningColor);
-        alertIcon.setHorizontalAlignment(SwingConstants.CENTER);
-
-        JLabel alertLabel = new JLabel("Suspicious Activity Detected!");
-        alertLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
-        alertLabel.setForeground(warningColor);
-        alertLabel.setHorizontalAlignment(SwingConstants.CENTER);
-
-        JTextArea alertDetails = new JTextArea(alertText);
-        alertDetails.setEditable(false);
-        alertDetails.setFont(new Font("Monospaced", Font.PLAIN, 12));
-        if (darkMode) {
-            alertDetails.setBackground(new Color(60, 20, 20));
-            alertDetails.setForeground(Color.WHITE);
-        } else {
-            alertDetails.setBackground(new Color(255, 240, 240));
-            alertDetails.setForeground(Color.BLACK);
-        }
-
-        JScrollPane alertScroll = new JScrollPane(alertDetails);
-
-        JPanel northPanel = new JPanel(new BorderLayout());
-        if (darkMode) northPanel.setBackground(new Color(50, 0, 0));
-        else northPanel.setBackground(new Color(255, 240, 240));
-
-        northPanel.add(alertIcon, BorderLayout.WEST);
-        northPanel.add(alertLabel, BorderLayout.CENTER);
-
-        JButton acknowledgeButton = new SmoothButton("Acknowledge Alert", brandBlue, warningColor, warningColor.darker(), new Font("SansSerif", Font.BOLD, 14));
-        acknowledgeButton.addActionListener(e -> alertDialog.dispose());
-
-        alertPanel.add(northPanel, BorderLayout.NORTH);
-        alertPanel.add(alertScroll, BorderLayout.CENTER);
-        alertPanel.add(acknowledgeButton, BorderLayout.SOUTH);
-
-        alertDialog.add(alertPanel);
-        alertDialog.setVisible(true);
+    private void showAlertSettings() {
+        tabPane.setSelectedIndex(2);
     }
 
     private void showTestAlert() {
         String testAlert = "TEST ALERT: This is a test security notification.\n" +
                 "If this were a real alert, details about suspicious transactions would appear here.\n" +
                 "You can configure alert thresholds in the settings panel.";
-
         showAlertNotification(testAlert);
     }
 
-    private void showAlertSettings() {
-        tabPane.setSelectedIndex(2); // Switch to alerts tab
+    private void showAlertNotification(String alertText) {
+        JDialog alertDialog = new JDialog(this, "Security Alert", true);
+        alertDialog.setSize(540, 340);
+        alertDialog.setLocationRelativeTo(this);
+
+        JPanel alertPanel = new JPanel(new MigLayout("fill, insets 18, gap 12", "[grow, fill]", "[][grow, fill][]"));
+
+        JLabel alertLabel = new JLabel("Suspicious Activity Detected!");
+        alertLabel.setIcon(AppUi.svgIcon(AppUi.ALERT_SVG, 28));
+        alertLabel.setIconTextGap(10);
+        alertLabel.putClientProperty("FlatLaf.styleClass", "h3");
+        alertLabel.setForeground(warningColor);
+
+        JTextArea alertDetails = new JTextArea(alertText);
+        alertDetails.setEditable(false);
+        alertDetails.setFont(new Font("Monospaced", Font.PLAIN, 12));
+
+        JButton acknowledgeButton = AppUi.primaryButton("Acknowledge");
+        acknowledgeButton.addActionListener(e -> alertDialog.dispose());
+
+        alertPanel.add(alertLabel, "growx, wrap");
+        alertPanel.add(new JScrollPane(alertDetails), "grow, push, wrap");
+        alertPanel.add(acknowledgeButton, "right, w 140!");
+
+        alertDialog.add(alertPanel);
+        alertDialog.setVisible(true);
     }
 
-    private void saveAlertSettings() {
-        File dir = new File("data");
-        if (!dir.exists()) {
-            dir.mkdir();
-        }
-        try (PrintWriter writer = new PrintWriter("data/alert_settings.properties")) {
-            writer.println("LARGE_DEPOSIT_THRESHOLD=" + LARGE_DEPOSIT_THRESHOLD);
-            writer.println("LARGE_WITHDRAWAL_THRESHOLD=" + LARGE_WITHDRAWAL_THRESHOLD);
-            writer.println("FREQUENT_TRANSACTION_COUNT=" + FREQUENT_TRANSACTION_COUNT);
-            writer.println("FREQUENT_TRANSACTION_HOURS=" + FREQUENT_TRANSACTION_HOURS);
-        } catch (IOException e) {
-            System.err.println("Error saving alert settings: " + e.getMessage());
-        }
-    }
-
-    private void loadAlertSettings() {
-        File settingsFile = new File("data/alert_settings.properties");
-        if (settingsFile.exists()) {
-            try (BufferedReader reader = new BufferedReader(new FileReader(settingsFile))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    String[] parts = line.split("=");
-                    if (parts.length == 2) {
-                        switch (parts[0]) {
-                            case "LARGE_DEPOSIT_THRESHOLD":
-                                LARGE_DEPOSIT_THRESHOLD = Double.parseDouble(parts[1]);
-                                break;
-                            case "LARGE_WITHDRAWAL_THRESHOLD":
-                                LARGE_WITHDRAWAL_THRESHOLD = Double.parseDouble(parts[1]);
-                                break;
-                            case "FREQUENT_TRANSACTION_COUNT":
-                                FREQUENT_TRANSACTION_COUNT = Integer.parseInt(parts[1]);
-                                break;
-                            case "FREQUENT_TRANSACTION_HOURS":
-                                FREQUENT_TRANSACTION_HOURS = Integer.parseInt(parts[1]);
-                                break;
-                        }
-                    }
-                }
-            } catch (IOException | NumberFormatException e) {
-                System.err.println("Error loading alert settings: " + e.getMessage());
-            }
+    private void saveSettingsFromFields(Component parent) {
+        try {
+            AlertSettings settings = new AlertSettings(
+                    parsePositiveMoney(depositField.getText()),
+                    parsePositiveMoney(withdrawalField.getText()),
+                    parsePositiveInteger(freqCountField.getText()),
+                    parsePositiveInteger(timeWindowField.getText())
+            );
+            applyAlertSettings(settings);
+            saveAlertSettings(settings);
+            JOptionPane.showMessageDialog(parent, "Alert settings saved successfully.", "Settings Saved", JOptionPane.INFORMATION_MESSAGE);
+        } catch (IllegalArgumentException | IOException ex) {
+            JOptionPane.showMessageDialog(parent, ex.getMessage(), "Invalid Input", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -722,197 +353,285 @@ public class AdminPanel extends JFrame {
         JFileChooser fileChooser = new JFileChooser();
         fileChooser.setDialogTitle("Export Activity Log");
 
-        // Ensure data dir exists and set for default file path
-        File dataDir = new File("data");
-        if (!dataDir.exists()) {
-            dataDir.mkdir();
+        try {
+            Files.createDirectories(UserManager.getDataDirectory());
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "Unable to prepare export directory.", "Export Failed", JOptionPane.ERROR_MESSAGE);
+            return;
         }
+
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-        File defaultFile = new File(dataDir, "FancyBank_ActivityLog_" + timestamp + ".txt");
-        fileChooser.setSelectedFile(defaultFile);
+        fileChooser.setSelectedFile(UserManager.getDataDirectory().resolve("FancyBank_ActivityLog_" + timestamp + ".txt").toFile());
 
         if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
-            File file = fileChooser.getSelectedFile();
-
-            try (PrintWriter writer = new PrintWriter(file)) {
-                writer.println("FancyBank Activity Log - Generated: " +
-                        LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-                writer.println("---------------------------------------------------------------");
-                writer.println();
-                writer.println(activityLog.getText());
-                writer.println();
-                writer.println("--- End of Activity Log ---");
-
-                JOptionPane.showMessageDialog(this,
-                        "Activity log exported successfully to:\n" + file.getAbsolutePath(),
+            Path file = fileChooser.getSelectedFile().toPath();
+            String content = "FancyBank Activity Log - Generated: " +
+                    LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) +
+                    System.lineSeparator() +
+                    "---------------------------------------------------------------" +
+                    System.lineSeparator() + System.lineSeparator() +
+                    activityLog.getText() +
+                    System.lineSeparator() + System.lineSeparator() +
+                    "--- End of Activity Log ---" +
+                    System.lineSeparator();
+            try {
+                Files.writeString(file, content, StandardCharsets.UTF_8);
+                JOptionPane.showMessageDialog(this, "Activity log exported successfully to:\n" + file.toAbsolutePath(),
                         "Export Successful", JOptionPane.INFORMATION_MESSAGE);
-
-            } catch (IOException e) {
-                JOptionPane.showMessageDialog(this,
-                        "Error exporting activity log: " + e.getMessage(),
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(this, "Error exporting activity log: " + ex.getMessage(),
                         "Export Failed", JOptionPane.ERROR_MESSAGE);
             }
         }
     }
 
-    private void applyDarkMode(Container container) {
-        container.setBackground(new Color(40, 40, 40));
-        container.setForeground(Color.WHITE);
+    private static String buildAlertReport(Map<String, List<TransactionRecord>> transactionsByUser, AlertSettings settings) {
+        StringBuilder alertText = new StringBuilder();
 
-        for (Component comp : container.getComponents()) {
-            if (comp instanceof JPanel) {
-                comp.setBackground(new Color(40, 40, 40));
-                comp.setForeground(Color.WHITE);
-                applyDarkMode((Container) comp);
-            } else if (comp instanceof JLabel) {
-                comp.setForeground(Color.WHITE);
-            } else if (comp instanceof JTextArea || comp instanceof JTextField) {
-                comp.setBackground(new Color(60, 60, 60));
-                comp.setForeground(Color.WHITE);
-                if (comp instanceof JTextArea) {
-                    ((JTextArea) comp).setCaretColor(Color.WHITE);
-                } else if (comp instanceof JTextField) {
-                    ((JTextField) comp).setCaretColor(Color.WHITE);
+        for (Map.Entry<String, List<TransactionRecord>> entry : transactionsByUser.entrySet()) {
+            String username = entry.getKey();
+            List<TransactionRecord> transactions = entry.getValue();
+
+            for (TransactionRecord record : transactions) {
+                if ("Deposit".equals(record.getType()) && record.getAmount().compareTo(settings.largeDepositThreshold) >= 0) {
+                    alertText.append(String.format("ALERT: Large deposit of %s by %s on %s%n",
+                            formatCurrency(record.getAmount()), username, record.getTimestamp()));
                 }
-            } else if (comp instanceof JScrollPane) {
-                JScrollPane scrollPane = (JScrollPane) comp;
-                Component viewportView = scrollPane.getViewport().getView();
-                if (viewportView instanceof JTextArea) {
-                    viewportView.setBackground(new Color(60, 60, 60));
-                    viewportView.setForeground(Color.WHITE);
-                } else if (viewportView instanceof JList) {
-                    viewportView.setBackground(new Color(60, 60, 60));
-                    viewportView.setForeground(Color.WHITE);
+                if ("Withdrawal".equals(record.getType()) && record.getAmount().compareTo(settings.largeWithdrawalThreshold) >= 0) {
+                    alertText.append(String.format("ALERT: Large withdrawal of %s by %s on %s%n",
+                            formatCurrency(record.getAmount()), username, record.getTimestamp()));
                 }
             }
+
+            if (transactions.size() >= settings.frequentTransactionCount) {
+                LocalDateTime cutoff = LocalDateTime.now().minusHours(settings.frequentTransactionHours);
+                long recentCount = transactions.stream()
+                        .filter(record -> record.getTimestampDate().isAfter(cutoff))
+                        .count();
+                if (recentCount >= settings.frequentTransactionCount) {
+                    alertText.append(String.format("ALERT: Frequent activity detected - %d transactions by %s in the last %d hours%n",
+                            recentCount, username, settings.frequentTransactionHours));
+                }
+            }
+        }
+
+        return alertText.toString();
+    }
+
+    private static AlertSettings loadAlertSettings() {
+        Path settingsFile = alertSettingsPath();
+        AlertSettings defaults = new AlertSettings(
+                LARGE_DEPOSIT_THRESHOLD,
+                LARGE_WITHDRAWAL_THRESHOLD,
+                FREQUENT_TRANSACTION_COUNT,
+                FREQUENT_TRANSACTION_HOURS
+        );
+        if (!Files.exists(settingsFile)) {
+            return defaults;
+        }
+
+        Properties properties = new Properties();
+        try (Reader reader = Files.newBufferedReader(settingsFile, StandardCharsets.UTF_8)) {
+            properties.load(reader);
+            return new AlertSettings(
+                    parsePositiveMoney(properties.getProperty("LARGE_DEPOSIT_THRESHOLD", defaults.largeDepositThreshold.toPlainString())),
+                    parsePositiveMoney(properties.getProperty("LARGE_WITHDRAWAL_THRESHOLD", defaults.largeWithdrawalThreshold.toPlainString())),
+                    parsePositiveInteger(properties.getProperty("FREQUENT_TRANSACTION_COUNT", String.valueOf(defaults.frequentTransactionCount))),
+                    parsePositiveInteger(properties.getProperty("FREQUENT_TRANSACTION_HOURS", String.valueOf(defaults.frequentTransactionHours)))
+            );
+        } catch (IOException | IllegalArgumentException ex) {
+            return defaults;
         }
     }
 
-    //
-    private class DataRefreshWorker extends SwingWorker<DataRefreshWorker.RefreshResult, String> {
+    private static void saveAlertSettings(AlertSettings settings) throws IOException {
+        Files.createDirectories(UserManager.getDataDirectory());
+        Properties properties = new Properties();
+        properties.setProperty("LARGE_DEPOSIT_THRESHOLD", settings.largeDepositThreshold.toPlainString());
+        properties.setProperty("LARGE_WITHDRAWAL_THRESHOLD", settings.largeWithdrawalThreshold.toPlainString());
+        properties.setProperty("FREQUENT_TRANSACTION_COUNT", String.valueOf(settings.frequentTransactionCount));
+        properties.setProperty("FREQUENT_TRANSACTION_HOURS", String.valueOf(settings.frequentTransactionHours));
+        try (Writer writer = Files.newBufferedWriter(alertSettingsPath(), StandardCharsets.UTF_8)) {
+            properties.store(writer, "FancyBank alert settings");
+        }
+    }
 
-        // Container for the data we collect in the background
-        class RefreshResult {
-            List<String> users;
-            Map<String, List<TransactionRecord>> transactions;
-            String alertReport;
+    private static Path alertSettingsPath() {
+        Path path = UserManager.getDataDirectory().resolve("alert_settings.properties").normalize();
+        if (!path.startsWith(UserManager.getDataDirectory())) {
+            throw new SecurityException("Resolved settings path escaped the data directory.");
+        }
+        return path;
+    }
 
-            RefreshResult(List<String> users, Map<String, List<TransactionRecord>> transactions, String alertReport) {
-                this.users = users;
-                this.transactions = transactions;
-                this.alertReport = alertReport;
+    private void applyAlertSettings(AlertSettings settings) {
+        LARGE_DEPOSIT_THRESHOLD = settings.largeDepositThreshold;
+        LARGE_WITHDRAWAL_THRESHOLD = settings.largeWithdrawalThreshold;
+        FREQUENT_TRANSACTION_COUNT = settings.frequentTransactionCount;
+        FREQUENT_TRANSACTION_HOURS = settings.frequentTransactionHours;
+
+        if (depositField != null) {
+            depositField.setText(settings.largeDepositThreshold.toPlainString());
+            withdrawalField.setText(settings.largeWithdrawalThreshold.toPlainString());
+            freqCountField.setText(String.valueOf(settings.frequentTransactionCount));
+            timeWindowField.setText(String.valueOf(settings.frequentTransactionHours));
+        }
+    }
+
+    private static BigDecimal parsePositiveMoney(String text) {
+        BigDecimal value;
+        try {
+            value = new BigDecimal(text.trim().replace(",", ""));
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("Money fields must be valid decimal amounts.");
+        }
+        if (value.scale() > 2) {
+            throw new IllegalArgumentException("Money fields cannot have more than two decimal places.");
+        }
+        value = value.setScale(2, RoundingMode.HALF_EVEN);
+        if (value.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Money fields must be greater than zero.");
+        }
+        return value;
+    }
+
+    private static int parsePositiveInteger(String text) {
+        try {
+            int value = Integer.parseInt(text.trim());
+            if (value <= 0) {
+                throw new IllegalArgumentException("Integer fields must be greater than zero.");
             }
+            return value;
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("Integer fields must be whole numbers.");
+        }
+    }
+
+    private static BigDecimal money(String value) {
+        return new BigDecimal(value).setScale(2, RoundingMode.HALF_EVEN);
+    }
+
+    private static String formatCurrency(BigDecimal amount) {
+        NumberFormat currency = NumberFormat.getCurrencyInstance(Locale.US);
+        currency.setMinimumFractionDigits(2);
+        currency.setMaximumFractionDigits(2);
+        return currency.format(amount.setScale(2, RoundingMode.HALF_EVEN));
+    }
+
+    private class DataRefreshWorker extends SwingWorker<DataRefreshWorker.RefreshResult, String> {
+        private final boolean notifyOnCompletion;
+
+        private DataRefreshWorker(boolean notifyOnCompletion) {
+            this.notifyOnCompletion = notifyOnCompletion;
         }
 
         @Override
-        protected RefreshResult doInBackground() throws Exception {
+        protected RefreshResult doInBackground() {
+            publish("Loading alert settings...");
+            AlertSettings settings = loadAlertSettings();
+
             publish("Fetching user list...");
             List<String> loadedUsers = UserManager.getAllUsers();
 
             publish("Loading transaction histories...");
             Map<String, List<TransactionRecord>> loadedTransactions = new HashMap<>();
-
-            // Load transactions for each user (previously done on UI thread)
-            int progress = 0;
             for (String username : loadedUsers) {
                 publish("Processing data for: " + username);
                 List<TransactionRecord> userTransactions = new ArrayList<>();
-                File historyFile = new File(username + "_history.txt");
+                Path historyFile = UserManager.getHistoryFile(username);
 
-                if (historyFile.exists()) {
-                    try (BufferedReader reader = new BufferedReader(new FileReader(historyFile))) {
+                if (Files.exists(historyFile)) {
+                    try (BufferedReader reader = Files.newBufferedReader(historyFile, StandardCharsets.UTF_8)) {
                         String line;
                         while ((line = reader.readLine()) != null) {
-                            if (line.trim().isEmpty()) continue;
                             TransactionRecord record = TransactionRecord.fromString(line);
                             if (record != null) {
                                 userTransactions.add(record);
                             }
                         }
+                    } catch (IOException ex) {
+                        publish("Unable to read history for: " + username);
                     }
                 }
-                // Sort: newest first
+
                 userTransactions.sort(Comparator.comparing(TransactionRecord::getTimestampDate).reversed());
                 loadedTransactions.put(username, userTransactions);
-
-                // Artificial delay to demonstrate responsiveness (remove in production)
-                // Thread.sleep(50);
             }
 
             publish("Analyzing for suspicious activity...");
-            // Re-implement the check logic here to run in background
-            StringBuilder alertText = new StringBuilder();
-            // (Logic adapted from your original checkForSuspiciousActivity method)
-            for (String username : loadedTransactions.keySet()) {
-                List<TransactionRecord> txs = loadedTransactions.get(username);
-
-                // Check thresholds (using the static variables from AdminPanel)
-                for (TransactionRecord record : txs) {
-                    if (record.getType().equals("Deposit") && record.getAmount() >= LARGE_DEPOSIT_THRESHOLD) {
-                        alertText.append(String.format("ALERT: Large deposit of $%,.2f by %s on %s\n",
-                                record.getAmount(), username, record.getTimestamp()));
-                    }
-                    if (record.getType().equals("Withdrawal") && record.getAmount() >= LARGE_WITHDRAWAL_THRESHOLD) {
-                        alertText.append(String.format("ALERT: Large withdrawal of $%,.2f by %s on %s\n",
-                                record.getAmount(), username, record.getTimestamp()));
-                    }
-                }
-                // Check frequency logic...
-                if (txs.size() >= FREQUENT_TRANSACTION_COUNT) {
-                    LocalDateTime cutoff = LocalDateTime.now().minusHours(FREQUENT_TRANSACTION_HOURS);
-                    long recentCount = txs.stream().filter(r -> r.getTimestampDate().isAfter(cutoff)).count();
-                    if (recentCount >= FREQUENT_TRANSACTION_COUNT) {
-                        alertText.append(String.format("ALERT: Frequent activity detected - %d transactions by %s in last %d hours\n",
-                                recentCount, username, FREQUENT_TRANSACTION_HOURS));
-                    }
-                }
-            }
-
-            return new RefreshResult(loadedUsers, loadedTransactions, alertText.toString());
+            String alertReport = buildAlertReport(loadedTransactions, settings);
+            return new RefreshResult(loadedUsers, loadedTransactions, settings, alertReport);
         }
 
         @Override
         protected void process(List<String> chunks) {
-            // Updates the status label while the background task runs
-            String latestStatus = chunks.get(chunks.size() - 1);
-            statusLabel.setText(latestStatus);
+            statusLabel.setText(chunks.get(chunks.size() - 1));
         }
 
         @Override
         protected void done() {
             try {
-                // Retrieve the final result safely
                 RefreshResult result = get();
+                applyAlertSettings(result.settings);
 
-                // 1. Update Users List
                 usersModel.clear();
                 for (String user : result.users) {
                     usersModel.addElement(user);
                 }
-
-                // 2. Update Transactions Map
                 allTransactions = result.transactions;
 
-                // 3. Handle Alerts
-                if (result.alertReport.length() > 0) {
-                    activityLog.append("\n--- SUSPICIOUS ACTIVITY REPORT ---\n");
+                activityLog.setText("");
+                activityLog.append("Data refreshed at " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + System.lineSeparator());
+
+                if (!result.alertReport.isEmpty()) {
+                    activityLog.append(System.lineSeparator());
+                    activityLog.append("--- SUSPICIOUS ACTIVITY REPORT ---" + System.lineSeparator());
                     activityLog.append(result.alertReport);
-                    activityLog.append("--------------------------------\n");
+                    activityLog.append("--------------------------------" + System.lineSeparator());
                     showAlertNotification(result.alertReport);
                 }
 
-                // 4. UI Finalization
                 statusLabel.setText("Data refreshed at " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")));
-                refreshButton.setEnabled(true); // Re-enable the button
-                setCursor(Cursor.getDefaultCursor());
-
-                JOptionPane.showMessageDialog(AdminPanel.this, "Data refresh complete.", "Success", JOptionPane.INFORMATION_MESSAGE);
-
-            } catch (Exception e) {
-                e.printStackTrace();
+                if (notifyOnCompletion) {
+                    JOptionPane.showMessageDialog(AdminPanel.this, "Data refresh complete.", "Success", JOptionPane.INFORMATION_MESSAGE);
+                }
+            } catch (Exception ex) {
                 statusLabel.setText("Error refreshing data.");
-                JOptionPane.showMessageDialog(AdminPanel.this, "Error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(AdminPanel.this, "Error: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            } finally {
+                refreshButton.setEnabled(true);
+                setCursor(Cursor.getDefaultCursor());
             }
+        }
+
+        private class RefreshResult {
+            private final List<String> users;
+            private final Map<String, List<TransactionRecord>> transactions;
+            private final AlertSettings settings;
+            private final String alertReport;
+
+            private RefreshResult(List<String> users, Map<String, List<TransactionRecord>> transactions,
+                                  AlertSettings settings, String alertReport) {
+                this.users = users;
+                this.transactions = transactions;
+                this.settings = settings;
+                this.alertReport = alertReport;
+            }
+        }
+    }
+
+    private static final class AlertSettings {
+        private final BigDecimal largeDepositThreshold;
+        private final BigDecimal largeWithdrawalThreshold;
+        private final int frequentTransactionCount;
+        private final int frequentTransactionHours;
+
+        private AlertSettings(BigDecimal largeDepositThreshold, BigDecimal largeWithdrawalThreshold,
+                              int frequentTransactionCount, int frequentTransactionHours) {
+            this.largeDepositThreshold = largeDepositThreshold;
+            this.largeWithdrawalThreshold = largeWithdrawalThreshold;
+            this.frequentTransactionCount = frequentTransactionCount;
+            this.frequentTransactionHours = frequentTransactionHours;
         }
     }
 }

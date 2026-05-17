@@ -1,270 +1,284 @@
+import net.miginfocom.swing.MigLayout;
+import org.knowm.xchart.XChartPanel;
+import org.knowm.xchart.XYChart;
+import org.knowm.xchart.XYChartBuilder;
+import org.knowm.xchart.XYSeries;
+import org.knowm.xchart.style.Styler;
+import org.knowm.xchart.style.markers.SeriesMarkers;
+
 import javax.swing.*;
 import javax.swing.text.AbstractDocument;
 import java.awt.*;
-import java.awt.event.*;
-import java.io.*;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.text.NumberFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 public class BankAppGui extends JFrame {
-    private BankAccount account;
+    private final BankAccount account;
+    private final List<BigDecimal> balancePoints = new ArrayList<>();
+    private final String username;
+    private final boolean isAdmin;
     private JTextField amountField;
     private JLabel balanceLabel;
     private JLabel statusLabel;
     private JTextArea historyArea;
-    private boolean darkMode = false;
-    private final Color lightBG = Color.WHITE;
-    private final Color darkBG = new Color(40, 40, 40);
-    private final Color lightFG = Color.BLACK;
-    private final Color darkFG = Color.LIGHT_GRAY;
-    private final Color brandBlue = new Color(0, 102, 204);
-    private final Color brandGold = new Color(204, 153, 0);
-    private List<Double> balancePoints = new ArrayList<>();
-    private String username;
-    private ChartPanel chartPanel;
-    private boolean isAdmin;
+    private BalanceChartPanel chartPanel;
+    private boolean darkMode;
 
     public BankAppGui(String username, boolean isAdmin, boolean darkMode) {
         this.username = username;
         this.isAdmin = isAdmin;
         this.darkMode = darkMode;
-        double initialBalance = UserManager.getBalance(username);
-        account = new BankAccount(initialBalance);
-
-        // Add initial balance point for the chart
-        balancePoints.add(initialBalance);
+        this.account = new BankAccount(UserManager.getBalance(username));
 
         setTitle("FancyBank Professional Banking - " + username + (isAdmin ? " (Administrator)" : ""));
-        setSize(800, 600);
+        setSize(1120, 720);
+        setMinimumSize(new Dimension(940, 620));
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
 
         initComponents();
         loadHistoryFromFile();
-        applyTheme();
+        if (balancePoints.isEmpty()) {
+            balancePoints.add(account.getBalance());
+        }
+        chartPanel.updateData(balancePoints);
         setVisible(true);
     }
 
     private void initComponents() {
-        Container container = getContentPane();
-        container.setLayout(new BorderLayout());
+        JPanel root = new JPanel(new MigLayout(
+                "fill, insets 18, gap 14",
+                "[min!][grow, fill][360::460, fill]",
+                "[][grow, fill][]"
+        ));
+        setContentPane(root);
 
-        // North panel: bank logo and user info
-        JPanel northPanel = new JPanel(new BorderLayout());
-        northPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 5, 10));
+        root.add(createHeaderPanel(), "span 3, growx, wrap");
+        root.add(createActivityPanel(), "span 2, grow, push");
+        root.add(createInsightsPanel(), "grow, wrap");
+        root.add(createTransactionPanel(), "span 3, growx");
+    }
 
-        // Logo panel
-        JPanel logoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JLabel logoLabel = new JLabel("FancyBank™");
-        logoLabel.setFont(new Font("Serif", Font.BOLD, 24));
-        logoLabel.setForeground(brandBlue);
-        logoPanel.add(logoLabel);
+    private JPanel createHeaderPanel() {
+        JPanel panel = new JPanel(new MigLayout("fillx, insets 0", "[][grow][]", "[]"));
 
-        // User info panel
-        JPanel userInfoPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        JLabel userInfo = new JLabel("👤 " + username + " | Account #: " + generateAccountNumber(username));
-        userInfo.setFont(new Font("SansSerif", Font.BOLD, 14));
-        userInfoPanel.add(userInfo);
+        JLabel logoLabel = new JLabel("FancyBank");
+        logoLabel.putClientProperty("FlatLaf.styleClass", "h1");
+        logoLabel.setForeground(AppUi.BRAND_BLUE);
 
-        northPanel.add(logoPanel, BorderLayout.WEST);
-        northPanel.add(userInfoPanel, BorderLayout.EAST);
-        container.add(northPanel, BorderLayout.NORTH);
+        JLabel subtitle = new JLabel("Professional banking and intelligence workspace");
+        subtitle.putClientProperty("FlatLaf.styleClass", "small");
 
-        // Center panel with balance and transaction history
-        JPanel centerPanel = new JPanel(new BorderLayout());
+        JPanel titleStack = new JPanel(new MigLayout("insets 0, gap 0", "[grow]", "[]2[]"));
+        titleStack.add(logoLabel, "wrap");
+        titleStack.add(subtitle);
 
-        // Top of center: balance and status
-        JPanel balancePanel = new JPanel(new BorderLayout());
-        balancePanel.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
+        JLabel userInfo = new JLabel(username + "  |  Account #: " + generateAccountNumber(username));
+        userInfo.setIcon(AppUi.svgIcon(AppUi.USER_SVG, 18));
+        userInfo.setIconTextGap(8);
 
-        balanceLabel = new JLabel("Current Balance: $" + String.format("%,.2f", account.getBalance()));
-        balanceLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
-        balanceLabel.setForeground(brandBlue);
+        JButton themeButton = AppUi.secondaryButton(darkMode ? "Light Mode" : "Dark Mode");
+        themeButton.addActionListener(e -> {
+            darkMode = !darkMode;
+            AppUi.setDarkMode(darkMode);
+            themeButton.setText(darkMode ? "Light Mode" : "Dark Mode");
+            chartPanel.applyChartTheme();
+        });
+
+        panel.add(titleStack);
+        panel.add(userInfo, "right");
+        panel.add(themeButton, "right");
+        return panel;
+    }
+
+    private JPanel createActivityPanel() {
+        JPanel panel = new JPanel(new MigLayout("fill, insets 0, gap 14", "[grow, fill]", "[][grow, fill]"));
+
+        JPanel balancePanel = AppUi.card();
+        balancePanel.setLayout(new MigLayout("fillx, insets 18", "[grow]", "[]6[]"));
+        balanceLabel = new JLabel("Current Balance: " + formatCurrency(account.getBalance()));
+        balanceLabel.putClientProperty("FlatLaf.styleClass", "h2");
+        balanceLabel.setForeground(AppUi.BRAND_BLUE);
 
         statusLabel = new JLabel("Welcome to FancyBank Professional Banking");
-        statusLabel.setFont(new Font("SansSerif", Font.ITALIC, 14));
+        statusLabel.putClientProperty("FlatLaf.styleClass", "medium");
 
-        balancePanel.add(balanceLabel, BorderLayout.NORTH);
-        balancePanel.add(statusLabel, BorderLayout.SOUTH);
-        centerPanel.add(balancePanel, BorderLayout.NORTH);
+        balancePanel.add(balanceLabel, "growx, wrap");
+        balancePanel.add(statusLabel, "growx");
 
-        // Middle of center: transaction history
-        JPanel historyPanel = new JPanel(new BorderLayout());
-        historyPanel.setBorder(BorderFactory.createTitledBorder("Transaction History"));
+        JPanel historyPanel = AppUi.card();
+        historyPanel.setLayout(new MigLayout("fill, insets 14", "[grow, fill]", "[][grow, fill]"));
+        historyPanel.add(AppUi.sectionTitle("Transaction History"), "wrap");
 
         historyArea = new JTextArea();
         historyArea.setEditable(false);
-        historyArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
-        JScrollPane historyScroll = new JScrollPane(historyArea);
-        historyPanel.add(historyScroll, BorderLayout.CENTER);
-        centerPanel.add(historyPanel, BorderLayout.CENTER);
+        historyArea.setLineWrap(false);
+        historyArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        historyPanel.add(new JScrollPane(historyArea), "grow");
 
-        container.add(centerPanel, BorderLayout.CENTER);
+        panel.add(balancePanel, "growx, wrap");
+        panel.add(historyPanel, "grow, push");
+        return panel;
+    }
 
-        // East panel: chart and controls
-        JPanel eastPanel = new JPanel(new BorderLayout());
-        eastPanel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 10));
-        eastPanel.setPreferredSize(new Dimension(200, 600));
+    private JPanel createInsightsPanel() {
+        JPanel panel = new JPanel(new MigLayout("fill, insets 0, gap 14", "[grow, fill]", "[grow, fill][]"));
 
-        JPanel chartTitlePanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
-        JLabel chartTitle = new JLabel("Balance History");
-        chartTitle.setFont(new Font("SansSerif", Font.BOLD, 14));
-        chartTitlePanel.add(chartTitle);
+        JPanel chartCard = AppUi.card();
+        chartCard.setLayout(new MigLayout("fill, insets 14", "[grow, fill]", "[][grow, fill]"));
+        chartCard.add(AppUi.sectionTitle("Balance Intelligence"), "wrap");
+        chartPanel = new BalanceChartPanel();
+        chartCard.add(chartPanel, "grow, push");
 
-        chartPanel = new ChartPanel(balancePoints);
-        chartPanel.setBorder(BorderFactory.createLoweredBevelBorder());
-
-        eastPanel.add(chartTitlePanel, BorderLayout.NORTH);
-        eastPanel.add(chartPanel, BorderLayout.CENTER);
-
-        // Theme toggle and (optional) admin panel button
-        JPanel eastBottomPanel = new JPanel(new GridLayout(0, 1, 10, 10));
-        JButton toggleThemeBtn = new JButton("Toggle Dark/Light Theme");
-        toggleThemeBtn.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        toggleThemeBtn.addActionListener(e -> {
-            darkMode = !darkMode;
-            applyTheme();
-        });
-
-        eastBottomPanel.add(toggleThemeBtn);
+        JPanel actionCard = AppUi.card();
+        actionCard.setLayout(new MigLayout("fillx, insets 14, gap 10", "[grow, fill]", "[]"));
 
         if (isAdmin) {
-            SmoothButton adminPanelBtn = new SmoothButton(
-                    "Open Admin Panel",
-                    brandBlue,
-                    brandBlue.darker(),
-                    Color.BLACK,
-                    new Font("SansSerif", Font.BOLD, 14)
-            );
-            adminPanelBtn.addActionListener(e -> {
-                new AdminPanel(username);
-            });
-            eastBottomPanel.add(adminPanelBtn);
+            JButton adminPanelBtn = AppUi.primaryButton("Open Admin Panel");
+            adminPanelBtn.setIcon(AppUi.svgIcon(AppUi.ADMIN_SVG, 16));
+            adminPanelBtn.addActionListener(e -> new AdminPanel(username));
+            actionCard.add(adminPanelBtn, "growx, wrap");
         }
 
-        eastPanel.add(eastBottomPanel, BorderLayout.SOUTH);
+        panel.add(chartCard, "grow, push, wrap");
+        panel.add(actionCard, "growx");
+        return panel;
+    }
 
-        container.add(eastPanel, BorderLayout.EAST);
+    private JPanel createTransactionPanel() {
+        JPanel panel = AppUi.card();
+        panel.setLayout(new MigLayout(
+                "fillx, insets 14, gap 12",
+                "[][180::260, fill][120!][120!]",
+                "[]"
+        ));
 
-        // South panel: transaction controls
-        JPanel southPanel = new JPanel(new GridLayout(1, 3, 10, 10));
-        southPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-
-        JPanel amountPanel = new JPanel(new BorderLayout());
-        amountPanel.add(new JLabel("Transaction Amount ($):"), BorderLayout.NORTH);
+        JLabel amountLabel = new JLabel("Transaction Amount");
         amountField = new JTextField();
-        amountField.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        amountPanel.add(amountField, BorderLayout.CENTER);
-
         ((AbstractDocument) amountField.getDocument()).setDocumentFilter(new DecimalInputFilter());
 
-        amountPanel.add(amountField, BorderLayout.CENTER);
-        SmoothButton depositBtn = new SmoothButton("Deposit Funds", brandBlue, brandBlue.darker(), Color.BLACK, new Font("SansSerif", Font.BOLD, 14));
-        SmoothButton withdrawBtn = new SmoothButton("Withdraw Funds", brandGold, brandGold.darker(), Color.BLACK, new Font("SansSerif", Font.BOLD, 14));
+        JButton depositBtn = AppUi.primaryButton("Deposit");
+        JButton withdrawBtn = AppUi.secondaryButton("Withdraw");
 
-        southPanel.add(amountPanel);
-        southPanel.add(depositBtn);
-        southPanel.add(withdrawBtn);
+        panel.add(amountLabel);
+        panel.add(amountField, "growx");
+        panel.add(depositBtn, "growx");
+        panel.add(withdrawBtn, "growx");
 
-        container.add(southPanel, BorderLayout.SOUTH);
-
-        // Button actions
         depositBtn.addActionListener(e -> handleDeposit());
         withdrawBtn.addActionListener(e -> handleWithdraw());
-
-        // Add keyboard listener for Enter key
         amountField.addKeyListener(new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent e) {
                 if (e.getKeyCode() == KeyEvent.VK_ENTER) {
-                    handleDeposit(); // Default action is deposit
+                    handleDeposit();
                 }
             }
         });
+
+        return panel;
     }
 
     private String generateAccountNumber(String username) {
-        int hash = Math.abs(username.hashCode()) % 1000000;
-        return String.format("%06d", hash);
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(username.getBytes(StandardCharsets.UTF_8));
+            int number = ((hash[0] & 0xFF) << 16) | ((hash[1] & 0xFF) << 8) | (hash[2] & 0xFF);
+            return String.format("%06d", number % 1_000_000);
+        } catch (NoSuchAlgorithmException ex) {
+            return String.format("%06d", Math.floorMod(username.hashCode(), 1_000_000));
+        }
     }
 
     private void handleDeposit() {
         try {
-            String amountText = amountField.getText().trim();
-            if (amountText.isEmpty()) {
-                showError("Please enter an amount to deposit.");
-                return;
-            }
-
-            amountText = amountText.replace(",", "");
-
-            double amount = Double.parseDouble(amountText);
-            if (amount <= 0) {
-                showError("Amount must be greater than zero.");
-                return;
-            }
+            BigDecimal amount = parseAmount("deposit");
             account.deposit(amount);
             UserManager.updateBalance(username, account.getBalance());
             logTransaction("Deposit", amount);
-            updateUI("Successfully deposited $" + String.format("%,.2f", amount));
-        } catch (NumberFormatException e) {
-            showError("Please enter a valid number.");
-        } catch (IllegalArgumentException e) {
-            showError(e.getMessage());
-        } catch (Exception e) {
-            showError("An error occurred: " + e.getMessage());
+            updateBankingUi("Successfully deposited " + formatCurrency(amount));
+        } catch (IllegalArgumentException ex) {
+            showError(ex.getMessage());
+        } catch (Exception ex) {
+            showError("An error occurred: " + ex.getMessage());
         }
     }
 
     private void handleWithdraw() {
         try {
-            String amountText = amountField.getText().trim();
-            if (amountText.isEmpty()) {
-                showError("Please enter an amount to withdraw.");
-                return;
-            }
-
-            amountText = amountText.replace(",", "");
-
-            double amount = Double.parseDouble(amountText);
-            if (amount <= 0) {
-                showError("Amount must be greater than zero.");
-                return;
-            }
+            BigDecimal amount = parseAmount("withdraw");
             account.withdraw(amount);
             UserManager.updateBalance(username, account.getBalance());
             logTransaction("Withdrawal", amount);
-            updateUI("Successfully withdrew $" + String.format("%,.2f", amount));
-        } catch (NumberFormatException e) {
-            showError("Please enter a valid number.");
-        } catch (IllegalArgumentException e) {
-            showError(e.getMessage());
-        } catch (Exception e) {
-            showError("An error occurred: " + e.getMessage());
+            updateBankingUi("Successfully withdrew " + formatCurrency(amount));
+        } catch (IllegalArgumentException ex) {
+            showError(ex.getMessage());
+        } catch (Exception ex) {
+            showError("An error occurred: " + ex.getMessage());
         }
     }
 
-    private void updateUI(String message) {
-        balanceLabel.setText("Current Balance: $" + String.format("%,.2f", account.getBalance()));
+    private BigDecimal parseAmount(String action) {
+        String amountText = amountField.getText().trim().replace(",", "");
+        if (amountText.isEmpty()) {
+            throw new IllegalArgumentException("Please enter an amount to " + action + ".");
+        }
+
+        BigDecimal amount;
+        try {
+            amount = new BigDecimal(amountText);
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("Please enter a valid number.");
+        }
+
+        if (amount.scale() > 2) {
+            throw new IllegalArgumentException("Amount cannot have more than two decimal places.");
+        }
+        amount = amount.setScale(2, RoundingMode.HALF_EVEN);
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Amount must be greater than zero.");
+        }
+        return amount;
+    }
+
+    private void updateBankingUi(String message) {
+        balanceLabel.setText("Current Balance: " + formatCurrency(account.getBalance()));
         statusLabel.setText(message);
         amountField.setText("");
         balancePoints.add(account.getBalance());
-        if (chartPanel != null) {
-            chartPanel.updateData(balancePoints);
-            chartPanel.repaint();
-        }
+        chartPanel.updateData(balancePoints);
     }
 
-    private void logTransaction(String type, double amount) {
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-        String line = String.format("[%s] %s: $%,.2f - Balance: $%,.2f\n", timestamp, type, amount, account.getBalance());
+    private void logTransaction(String type, BigDecimal amount) {
+        TransactionRecord record = new TransactionRecord(type, amount, account.getBalance());
+        String line = record.toLogLine() + System.lineSeparator();
         historyArea.append(line);
-        try (FileWriter fw = new FileWriter(username + "_history.txt", true)) {
-            fw.write(line);
-        } catch(IOException e) {
-            e.printStackTrace();
+
+        try {
+            Files.createDirectories(UserManager.getDataDirectory());
+            Files.writeString(
+                    UserManager.getHistoryFile(username),
+                    line,
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND
+            );
+        } catch (IOException ex) {
+            showError("Unable to write transaction history.");
         }
     }
 
@@ -272,211 +286,162 @@ public class BankAppGui extends JFrame {
         JOptionPane.showMessageDialog(this, message, "Transaction Error", JOptionPane.ERROR_MESSAGE);
     }
 
-    // In BankAppGui.java
-
-    private void applyTheme() {
-        // 1. Use the manager to style the whole window
-        ThemeManager.applyTheme(this.getContentPane(), darkMode);
-
-        // 2. Handle special components that need brand colors
-        if (balanceLabel != null) {
-            balanceLabel.setForeground(darkMode ? ThemeManager.BRAND_GOLD : ThemeManager.BRAND_BLUE);
-        }
-
-        // 3. Refresh the UI
-        SwingUtilities.updateComponentTreeUI(this);
-    }
-
-    private void applyThemeToContainer(Container container, Color bg, Color fg) {
-        container.setBackground(bg);
-        container.setForeground(fg);
-
-        for (Component comp : container.getComponents()) {
-            if (comp instanceof JPanel) {
-                comp.setBackground(bg);
-                comp.setForeground(fg);
-                applyThemeToContainer((Container)comp, bg, fg);
-            } else if (comp instanceof JTextField || comp instanceof JTextArea) {
-                comp.setBackground(darkMode ? new Color(60, 60, 60) : Color.WHITE);
-                comp.setForeground(darkMode ? Color.LIGHT_GRAY : Color.BLACK);
-            } else if (!(comp instanceof JButton || comp instanceof ChartPanel)) {
-                // Don't change the background of buttons (they have their own styling)
-                comp.setBackground(bg);
-                comp.setForeground(fg);
-            }
-
-            if (comp instanceof Container && !(comp instanceof JButton)) {
-                applyThemeToContainer((Container)comp, bg, fg);
-            }
-        }
-    }
-
     private void loadHistoryFromFile() {
-        File file = new File(username + "_history.txt");
-        if(file.exists()){
-            try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    historyArea.append(line + "\n");
-
-                    // Extract balance from history to populate chart data
-                    try {
-                        String balanceStr = line.substring(line.lastIndexOf("$") + 1);
-                        double balance = Double.parseDouble(balanceStr.replace(",", ""));
-                        balancePoints.add(balance);
-                    } catch (Exception e) {
-                        // Skip if can't parse balance from this line
-                    }
-                }
-            } catch(IOException e) {
-                e.printStackTrace();
-            }
+        Path historyFile = UserManager.getHistoryFile(username);
+        if (!Files.exists(historyFile)) {
+            return;
         }
+
+        try (BufferedReader reader = Files.newBufferedReader(historyFile, StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                TransactionRecord record = TransactionRecord.fromString(line);
+                if (record == null) {
+                    continue;
+                }
+                historyArea.append(record.toLogLine() + System.lineSeparator());
+                record.getBalanceAfter().ifPresent(balancePoints::add);
+            }
+        } catch (IOException ex) {
+            showError("Unable to load transaction history.");
+        }
+    }
+
+    private static String formatCurrency(BigDecimal amount) {
+        NumberFormat currency = NumberFormat.getCurrencyInstance(Locale.US);
+        currency.setMinimumFractionDigits(2);
+        currency.setMaximumFractionDigits(2);
+        return currency.format(UserManager.money(amount));
     }
 }
-
-
 
 class BankAccount {
-    private double balance;
+    private BigDecimal balance;
 
-    public BankAccount(double initialBalance) {
-        if(initialBalance < 0) throw new IllegalArgumentException("Negative balance not allowed.");
-        balance = initialBalance;
+    public BankAccount(BigDecimal initialBalance) {
+        if (initialBalance == null || initialBalance.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("Negative balance not allowed.");
+        }
+        balance = UserManager.money(initialBalance);
     }
 
-    public void deposit(double amount) {
-        if(amount <= 0) throw new IllegalArgumentException("Deposit amount must be positive.");
-        balance += amount;
+    public void deposit(BigDecimal amount) {
+        validatePositive(amount, "Deposit amount must be positive.");
+        balance = UserManager.money(balance.add(amount));
     }
 
-    public void withdraw(double amount) {
-        if(amount <= 0) throw new IllegalArgumentException("Withdrawal amount must be positive.");
-        if(amount > balance) throw new IllegalArgumentException("Insufficient funds for this withdrawal.");
-        balance -= amount;
+    public void withdraw(BigDecimal amount) {
+        validatePositive(amount, "Withdrawal amount must be positive.");
+        if (amount.compareTo(balance) > 0) {
+            throw new IllegalArgumentException("Insufficient funds for this withdrawal.");
+        }
+        balance = UserManager.money(balance.subtract(amount));
     }
 
-    public double getBalance() {
+    public BigDecimal getBalance() {
         return balance;
+    }
+
+    private void validatePositive(BigDecimal amount, String message) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException(message);
+        }
     }
 }
 
-class ChartPanel extends JPanel {
-    private List<Double> balances;
-    private boolean darkMode = false;
-    private final Color lightGridColor = new Color(220, 220, 220);
-    private final Color darkGridColor = new Color(70, 70, 70);
-    private final Color lightLineColor = new Color(0, 102, 204);
-    private final Color darkLineColor = new Color(51, 153, 255);
-    private final Color lightPointColor = new Color(0, 51, 153);
-    private final Color darkPointColor = new Color(102, 178, 255);
+class BalanceChartPanel extends JPanel {
+    private static final String SERIES_NAME = "Balance";
+    private final XYChart chart;
+    private final XChartPanel<XYChart> chartView;
+    private List<BigDecimal> balances = new ArrayList<>();
 
-    public ChartPanel(List<Double> balances) {
-        this.balances = new ArrayList<>(balances); // Create a copy
-        setPreferredSize(new Dimension(180, 200));
-    }
-    
-    public void updateData(List<Double> newBalances) {
-        this.balances = new ArrayList<>(newBalances); // Create a copy
-    }
-    
-    public void setDarkMode(boolean darkMode) {
-        this.darkMode = darkMode;
+    public BalanceChartPanel() {
+        setLayout(new MigLayout("fill, insets 0", "[grow, fill]", "[grow, fill]"));
+
+        chart = new XYChartBuilder()
+                .width(420)
+                .height(280)
+                .theme(Styler.ChartTheme.Matlab)
+                .xAxisTitle("Transaction")
+                .yAxisTitle("Balance")
+                .build();
+        configureChart();
+
+        chartView = new XChartPanel<>(chart);
+        add(chartView, "grow, push");
     }
 
-    @Override
-    protected void paintComponent(Graphics g) {
-        super.paintComponent(g);
-        if(balances == null || balances.isEmpty()) return;
-        
-        Graphics2D g2 = (Graphics2D) g;
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        
-        int w = getWidth();
-        int h = getHeight();
-        int padding = 20;
-        int labelPadding = 20;
-        
-        // Background
-        g2.setColor(darkMode ? new Color(30, 30, 30) : Color.WHITE);
-        g2.fillRect(0, 0, w, h);
-        
-        // Calculate min and max values for scaling
-        double minBalance = balances.stream().mapToDouble(b -> b).min().orElse(0);
-        double maxBalance = balances.stream().mapToDouble(b -> b).max().orElse(1);
-        
-        // Ensure min and max are different to avoid division by zero
-        if (maxBalance == minBalance) {
-            if (maxBalance == 0) maxBalance = 1;
-            else maxBalance *= 1.1;
+    public void updateData(List<BigDecimal> newBalances) {
+        balances = new ArrayList<>(newBalances);
+        Runnable update = () -> {
+            configureChart();
+            List<Integer> xData = new ArrayList<>();
+            List<Double> yData = new ArrayList<>();
+
+            if (balances.isEmpty()) {
+                xData.add(0);
+                yData.add(0.0);
+            } else {
+                for (int i = 0; i < balances.size(); i++) {
+                    xData.add(i + 1);
+                    yData.add(balances.get(i).doubleValue());
+                }
+            }
+
+            if (chart.getSeriesMap().containsKey(SERIES_NAME)) {
+                chart.updateXYSeries(SERIES_NAME, xData, yData, null);
+            } else {
+                XYSeries series = chart.addSeries(SERIES_NAME, xData, yData);
+                series.setMarker(SeriesMarkers.CIRCLE);
+            }
+
+            chartView.revalidate();
+            chartView.repaint();
+        };
+
+        if (SwingUtilities.isEventDispatchThread()) {
+            update.run();
+        } else {
+            SwingUtilities.invokeLater(update);
         }
-        
-        int pointCount = balances.size();
-        double xScale = ((double) (w - 2 * padding - labelPadding)) / (pointCount - 1);
-        double yScale = ((double) (h - 2 * padding - labelPadding)) / (maxBalance - minBalance);
-        
-        // Draw grid lines
-        g2.setColor(darkMode ? darkGridColor : lightGridColor);
-        g2.setStroke(new BasicStroke(1f));
-        
-        // Draw horizontal grid lines
-        for (int i = 0; i < 5; i++) {
-            int y = padding + labelPadding + (h - 2 * padding - 2 * labelPadding) * i / 4;
-            g2.drawLine(padding, y, w - padding, y);
-        }
-        
-        // Draw vertical grid lines
-        for (int i = 0; i < pointCount; i += Math.max(1, pointCount / 5)) {
-            int x = padding + labelPadding + (int)(i * xScale);
-            g2.drawLine(x, padding, x, h - padding - labelPadding);
-        }
-        
-        // Draw axes
-        g2.setColor(darkMode ? Color.LIGHT_GRAY : Color.DARK_GRAY);
-        g2.setStroke(new BasicStroke(2f));
-        g2.drawLine(padding + labelPadding, padding, padding + labelPadding, h - padding - labelPadding);
-        g2.drawLine(padding + labelPadding, h - padding - labelPadding, w - padding, h - padding - labelPadding);
-        
-        // Draw balance line
-        g2.setColor(darkMode ? darkLineColor : lightLineColor);
-        g2.setStroke(new BasicStroke(2f));
-        
-        int[] xPoints = new int[pointCount];
-        int[] yPoints = new int[pointCount];
-        
-        for (int i = 0; i < pointCount; i++) {
-            xPoints[i] = padding + labelPadding + (int)(i * xScale);
-            yPoints[i] = h - padding - labelPadding - (int)((balances.get(i) - minBalance) * yScale);
-        }
-        
-        // Draw line
-        for (int i = 0; i < pointCount - 1; i++) {
-            g2.drawLine(xPoints[i], yPoints[i], xPoints[i + 1], yPoints[i + 1]);
-        }
-        
-        // Draw points
-        g2.setColor(darkMode ? darkPointColor : lightPointColor);
-        for (int i = 0; i < pointCount; i++) {
-            g2.fillOval(xPoints[i] - 4, yPoints[i] - 4, 8, 8);
-        }
-        
-        // Draw the minimum and maximum values
-        g2.setColor(darkMode ? Color.LIGHT_GRAY : Color.DARK_GRAY);
-        g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
-        g2.drawString("$" + String.format("%,.2f", minBalance), 5, h - padding - labelPadding);
-        g2.drawString("$" + String.format("%,.2f", maxBalance), 5, padding + 10);
+    }
+
+    public void applyChartTheme() {
+        configureChart();
+        chartView.repaint();
+    }
+
+    private void configureChart() {
+        boolean dark = AppUi.isDark();
+        Color bg = UIManager.getColor("Panel.background");
+        Color fg = UIManager.getColor("Label.foreground");
+        Color grid = dark ? AppUi.DARK_SURFACE_LINE : AppUi.SURFACE_LINE;
+
+        chart.getStyler().setLegendVisible(false);
+        chart.getStyler().setChartBackgroundColor(bg);
+        chart.getStyler().setPlotBackgroundColor(bg);
+        chart.getStyler().setPlotBorderVisible(false);
+        chart.getStyler().setPlotGridLinesColor(grid);
+        chart.getStyler().setChartFontColor(fg);
+        chart.getStyler().setAxisTickLabelsColor(fg);
+        chart.getStyler().setAxisTitleFont(UIManager.getFont("Label.font"));
+        chart.getStyler().setAxisTickLabelsFont(UIManager.getFont("Label.font"));
+        chart.getStyler().setDefaultSeriesRenderStyle(XYSeries.XYSeriesRenderStyle.Line);
+        chart.getStyler().setSeriesColors(new Color[]{AppUi.BRAND_BLUE});
+        chart.getStyler().setMarkerSize(5);
+        chart.getStyler().setXAxisDecimalPattern("0");
+        chart.getStyler().setYAxisDecimalPattern("$#,##0.00");
     }
 }
 
 class LoginScreen extends JFrame {
     private JTextField usernameField;
     private JPasswordField pinField;
-    private boolean darkMode = true;
-    private final Color brandBlue = new Color(0, 102, 204);
+    private final boolean darkMode = true;
 
     public LoginScreen() {
         setTitle("FancyBank Login");
-        setSize(400, 300);
+        setSize(420, 320);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setResizable(false);
@@ -484,72 +449,46 @@ class LoginScreen extends JFrame {
     }
 
     private void initUI() {
-        JPanel mainPanel = new JPanel(new BorderLayout());
-        if (darkMode) mainPanel.setBackground(new Color(40, 40, 40));
-        
-        // Logo at top
-        JPanel logoPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
-        if (darkMode) logoPanel.setBackground(new Color(40, 40, 40));
-        JLabel logoLabel = new JLabel("FancyBank™");
-        logoLabel.setFont(new Font("Serif", Font.BOLD, 32));
-        logoLabel.setForeground(brandBlue);
+        JPanel mainPanel = new JPanel(new MigLayout(
+                "fill, insets 28, gap 12",
+                "[grow, fill]",
+                "[]18[]18[]"
+        ));
+
+        JLabel logoLabel = new JLabel("FancyBank");
+        logoLabel.putClientProperty("FlatLaf.styleClass", "h1");
+        logoLabel.setForeground(AppUi.BRAND_BLUE);
         JLabel tagline = new JLabel("Professional Banking Solutions");
-        tagline.setFont(new Font("SansSerif", Font.ITALIC, 14));
-        tagline.setForeground(Color.LIGHT_GRAY);
-        
-        JPanel logoPadding = new JPanel(new GridLayout(2, 1, 5, 0));
-        if (darkMode) logoPadding.setBackground(new Color(40, 40, 40));
-        logoPadding.add(logoLabel);
-        logoPadding.add(tagline);
-        logoPanel.add(logoPadding);
-        
-        // Login form
-        JPanel formPanel = new JPanel(new GridLayout(3, 2, 10, 10));
-        formPanel.setBorder(BorderFactory.createEmptyBorder(20, 40, 20, 40));
-        if (darkMode) formPanel.setBackground(new Color(40, 40, 40));
-        
-        JLabel usernameLabel = new JLabel("Username:");
-        usernameLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        usernameLabel.setForeground(Color.LIGHT_GRAY);
-        
-        JLabel pinLabel = new JLabel("PIN:");
-        pinLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        pinLabel.setForeground(Color.LIGHT_GRAY);
-        
+        tagline.putClientProperty("FlatLaf.styleClass", "medium");
+
+        JPanel titlePanel = new JPanel(new MigLayout("insets 0, gap 0", "[center]", "[]4[]"));
+        titlePanel.add(logoLabel, "wrap");
+        titlePanel.add(tagline);
+
+        JPanel formPanel = new JPanel(new MigLayout(
+                "fillx, insets 0, gap 10",
+                "[][grow, fill]",
+                "[][]"
+        ));
+
         usernameField = new JTextField();
-        usernameField.setFont(new Font("SansSerif", Font.PLAIN, 14));
         pinField = new JPasswordField();
-        pinField.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        
-        if (darkMode) {
-            usernameField.setBackground(new Color(60, 60, 60));
-            usernameField.setForeground(Color.WHITE);
-            usernameField.setCaretColor(Color.WHITE);
-            pinField.setBackground(new Color(60, 60, 60));
-            pinField.setForeground(Color.WHITE);
-            pinField.setCaretColor(Color.WHITE);
-        }
-        
-        formPanel.add(usernameLabel);
-        formPanel.add(usernameField);
-        formPanel.add(pinLabel);
-        formPanel.add(pinField);
-        
-        // Buttons
-        JPanel buttonPanel = new JPanel(new GridLayout(1, 2, 20, 0));
-        buttonPanel.setBorder(BorderFactory.createEmptyBorder(10, 40, 20, 40));
-        if (darkMode) buttonPanel.setBackground(new Color(40, 40, 40));
-        
-        SmoothButton loginBtn = new SmoothButton("Login", brandBlue, brandBlue, brandBlue.darker(), new Font("SansSerif", Font.BOLD, 14));
-        SmoothButton registerBtn = new SmoothButton("Register", brandBlue, new Color(100, 100, 100), new Color(70, 70, 70), new Font("SansSerif", Font.PLAIN, 14));
-        
+
+        formPanel.add(new JLabel("Username"));
+        formPanel.add(usernameField, "growx, wrap");
+        formPanel.add(new JLabel("PIN"));
+        formPanel.add(pinField, "growx");
+
+        JPanel buttonPanel = new JPanel(new MigLayout("fillx, insets 0, gap 10", "[grow, fill][grow, fill]", "[]"));
+        JButton loginBtn = AppUi.primaryButton("Login");
+        JButton registerBtn = AppUi.secondaryButton("Register");
+
         loginBtn.addActionListener(e -> handleLogin());
         registerBtn.addActionListener(e -> new RegistrationForm(darkMode));
-        
-        buttonPanel.add(loginBtn);
-        buttonPanel.add(registerBtn);
-        
-        // Add key listeners for Enter key
+
+        buttonPanel.add(loginBtn, "growx");
+        buttonPanel.add(registerBtn, "growx");
+
         KeyAdapter enterKeyListener = new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent e) {
@@ -558,40 +497,38 @@ class LoginScreen extends JFrame {
                 }
             }
         };
-        
         usernameField.addKeyListener(enterKeyListener);
         pinField.addKeyListener(enterKeyListener);
-        
-        // Add components to main panel
-        mainPanel.add(logoPanel, BorderLayout.NORTH);
-        mainPanel.add(formPanel, BorderLayout.CENTER);
-        mainPanel.add(buttonPanel, BorderLayout.SOUTH);
-        
+
+        mainPanel.add(titlePanel, "growx, wrap");
+        mainPanel.add(formPanel, "growx, wrap");
+        mainPanel.add(buttonPanel, "growx");
         add(mainPanel);
         setVisible(true);
     }
 
     private void handleLogin() {
         String username = usernameField.getText().trim();
-        String pin = new String(pinField.getPassword()).trim();
-        
-        if (username.isEmpty() || pin.isEmpty()) {
-            JOptionPane.showMessageDialog(this, 
-                "Please enter both username and PIN.", 
-                "Login Error", 
-                JOptionPane.ERROR_MESSAGE);
-            return;
-        }
+        char[] pin = pinField.getPassword();
 
-        if (UserManager.validateUser(username, pin)) {
-            boolean isAdmin = UserManager.isAdmin(username);
-            new BankAppGui(username, isAdmin, darkMode);
-            dispose();
-        } else {
-            JOptionPane.showMessageDialog(this, 
-                "Invalid credentials. Please try again.", 
-                "Authentication Failed", 
-                JOptionPane.ERROR_MESSAGE);
+        try {
+            if (username.isEmpty() || pin.length == 0) {
+                JOptionPane.showMessageDialog(this, "Please enter both username and PIN.", "Login Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+
+            if (UserManager.validateUser(username, pin)) {
+                boolean isAdmin = UserManager.isAdmin(username);
+                new BankAppGui(username, isAdmin, darkMode);
+                dispose();
+            } else {
+                JOptionPane.showMessageDialog(this, "Invalid credentials. Please try again.", "Authentication Failed", JOptionPane.ERROR_MESSAGE);
+            }
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Login Error", JOptionPane.ERROR_MESSAGE);
+        } finally {
+            Arrays.fill(pin, '\0');
+            pinField.setText("");
         }
     }
 }
@@ -600,14 +537,10 @@ class RegistrationForm extends JFrame {
     private JTextField usernameField;
     private JPasswordField pinField;
     private JPasswordField confirmPinField;
-    private JCheckBox adminCheckBox;
-    private boolean darkMode;
-    private final Color brandBlue = new Color(0, 102, 204);
 
-    public RegistrationForm(boolean darkMode) {
-        this.darkMode = darkMode;
+    public RegistrationForm(boolean ignoredDarkMode) {
         setTitle("FancyBank - Register New Account");
-        setSize(400, 350);
+        setSize(420, 300);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setResizable(false);
@@ -616,115 +549,73 @@ class RegistrationForm extends JFrame {
     }
 
     private void initUI() {
-        JPanel mainPanel = new JPanel(new BorderLayout());
-        if (darkMode) mainPanel.setBackground(new Color(40, 40, 40));
-
-        // Title
-        JPanel titlePanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
-        if (darkMode) titlePanel.setBackground(new Color(40, 40, 40));
+        JPanel mainPanel = new JPanel(new MigLayout(
+                "fill, insets 28, gap 12",
+                "[grow, fill]",
+                "[]18[]18[]"
+        ));
 
         JLabel titleLabel = new JLabel("Create New Account");
-        titleLabel.setFont(new Font("Serif", Font.BOLD, 24));
-        titleLabel.setForeground(darkMode ? Color.WHITE : brandBlue);
-        titlePanel.add(titleLabel);
+        titleLabel.putClientProperty("FlatLaf.styleClass", "h2");
 
-        // Form
-        JPanel formPanel = new JPanel(new GridLayout(4, 2, 10, 15));
-        formPanel.setBorder(BorderFactory.createEmptyBorder(20, 40, 20, 40));
-        if (darkMode) formPanel.setBackground(new Color(40, 40, 40));
-
-        JLabel usernameLabel = new JLabel("Username:");
-        JLabel pinLabel = new JLabel("PIN:");
-        JLabel confirmPinLabel = new JLabel("Confirm PIN:");
-
-        if (darkMode) {
-            usernameLabel.setForeground(Color.LIGHT_GRAY);
-            pinLabel.setForeground(Color.LIGHT_GRAY);
-            confirmPinLabel.setForeground(Color.LIGHT_GRAY);
-        }
+        JPanel formPanel = new JPanel(new MigLayout("fillx, insets 0, gap 10", "[][grow, fill]", "[][][]"));
 
         usernameField = new JTextField();
         pinField = new JPasswordField();
         confirmPinField = new JPasswordField();
-        adminCheckBox = new JCheckBox("Register as Administrator");
 
-        if (darkMode) {
-            usernameField.setBackground(new Color(60, 60, 60));
-            usernameField.setForeground(Color.WHITE);
-            usernameField.setCaretColor(Color.WHITE);
+        formPanel.add(new JLabel("Username"));
+        formPanel.add(usernameField, "growx, wrap");
+        formPanel.add(new JLabel("PIN"));
+        formPanel.add(pinField, "growx, wrap");
+        formPanel.add(new JLabel("Confirm PIN"));
+        formPanel.add(confirmPinField, "growx");
 
-            pinField.setBackground(new Color(60, 60, 60));
-            pinField.setForeground(Color.WHITE);
-            pinField.setCaretColor(Color.WHITE);
-
-            confirmPinField.setBackground(new Color(60, 60, 60));
-            confirmPinField.setForeground(Color.WHITE);
-            confirmPinField.setCaretColor(Color.WHITE);
-
-            adminCheckBox.setBackground(new Color(40, 40, 40));
-            adminCheckBox.setForeground(Color.LIGHT_GRAY);
-        }
-
-        formPanel.add(usernameLabel);
-        formPanel.add(usernameField);
-        formPanel.add(pinLabel);
-        formPanel.add(pinField);
-        formPanel.add(confirmPinLabel);
-        formPanel.add(confirmPinField);
-        formPanel.add(new JLabel()); // Empty for spacing
-        formPanel.add(adminCheckBox);
-
-        // Buttons
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 10));
-        if (darkMode) buttonPanel.setBackground(new Color(40, 40, 40));
-
-        SmoothButton registerBtn = new SmoothButton("Register Account", brandBlue, brandBlue, brandBlue.darker(), new Font("SansSerif", Font.BOLD, 14));
-        SmoothButton cancelBtn = new SmoothButton("Cancel", brandBlue, new Color(100, 100, 100), new Color(70, 70, 70), new Font("SansSerif", Font.PLAIN, 14));
+        JPanel buttonPanel = new JPanel(new MigLayout("fillx, insets 0, gap 10", "[grow, fill][grow, fill]", "[]"));
+        JButton registerBtn = AppUi.primaryButton("Register Account");
+        JButton cancelBtn = AppUi.secondaryButton("Cancel");
 
         registerBtn.addActionListener(e -> registerUser());
         cancelBtn.addActionListener(e -> dispose());
 
-        buttonPanel.add(registerBtn);
-        buttonPanel.add(cancelBtn);
+        buttonPanel.add(registerBtn, "growx");
+        buttonPanel.add(cancelBtn, "growx");
 
-        // Add everything to main panel
-        mainPanel.add(titlePanel, BorderLayout.NORTH);
-        mainPanel.add(formPanel, BorderLayout.CENTER);
-        mainPanel.add(buttonPanel, BorderLayout.SOUTH);
-
+        mainPanel.add(titleLabel, "center, wrap");
+        mainPanel.add(formPanel, "growx, wrap");
+        mainPanel.add(buttonPanel, "growx");
         add(mainPanel);
     }
 
     private void registerUser() {
         String username = usernameField.getText().trim();
-        String pin = new String(pinField.getPassword()).trim();
-        String confirmPin = new String(confirmPinField.getPassword()).trim();
-        boolean isAdmin = adminCheckBox.isSelected();
+        char[] pin = pinField.getPassword();
+        char[] confirmPin = confirmPinField.getPassword();
 
-        // Validate inputs
-        if (username.isEmpty() || pin.isEmpty()) {
-            JOptionPane.showMessageDialog(this,
-                    "Please enter both username and PIN.",
-                    "Registration Error",
-                    JOptionPane.ERROR_MESSAGE);
-            return;
+        try {
+            if (username.isEmpty() || pin.length == 0) {
+                JOptionPane.showMessageDialog(this, "Please enter both username and PIN.", "Registration Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            if (!Arrays.equals(pin, confirmPin)) {
+                JOptionPane.showMessageDialog(this, "PINs do not match. Please try again.", "Registration Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            if (UserManager.userExists(username)) {
+                JOptionPane.showMessageDialog(this, "Username already exists. Choose another.");
+                return;
+            }
+
+            UserManager.registerUser(username, pin);
+            JOptionPane.showMessageDialog(this, "User registered successfully!");
+            dispose();
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Registration Error", JOptionPane.ERROR_MESSAGE);
+        } finally {
+            Arrays.fill(pin, '\0');
+            Arrays.fill(confirmPin, '\0');
+            pinField.setText("");
+            confirmPinField.setText("");
         }
-
-        if (!pin.equals(confirmPin)) {
-            JOptionPane.showMessageDialog(this,
-                    "PINs do not match. Please try again.",
-                    "Registration Error",
-                    JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-
-        if (UserManager.userExists(username)) {
-            JOptionPane.showMessageDialog(this, "Username already exists. Choose another.");
-            return;
-        }
-
-        UserManager.registerUser(username, pin, isAdmin);
-        JOptionPane.showMessageDialog(this, "User registered successfully!");
-        dispose(); // Close the registration window
     }
 }

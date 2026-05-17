@@ -1,6 +1,10 @@
 import javax.swing.*;
 import java.awt.*;
 import java.io.File;
+import java.math.BigDecimal;
+import java.text.NumberFormat;
+import java.util.Locale;
+import net.miginfocom.swing.MigLayout;
 
 public class Main {
     // Application constants
@@ -11,21 +15,13 @@ public class Main {
     private static boolean defaultDarkMode = true;
 
     public static void main(String[] args) {
-        // Set the look and feel to the system default
-        try {
-            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-        } catch (Exception e) {
-            System.err.println("Could not set system look and feel: " + e.getMessage());
-        }
+        AppUi.installLookAndFeel(defaultDarkMode);
 
         // Create application directories if they don't exist
         initializeDirectories();
 
         // Load any application settings
         loadSettings();
-
-        // Set up custom fonts
-        setupFonts();
 
         // Create and display the login screen on the Event Dispatch Thread
         SwingUtilities.invokeLater(() -> {
@@ -62,40 +58,37 @@ public class Main {
         }
     }
 
-    private static void setupFonts() {
-        //Future use for custom fonts
-    }
-
     private static void showSplashScreen() {
         // Create and display a splash screen for 2 seconds
         JWindow splashScreen = new JWindow();
-        splashScreen.setSize(400, 300);
-        splashScreen.setLocationRelativeTo(null);
-
-        JPanel content = new JPanel(new BorderLayout());
-        content.setBorder(BorderFactory.createLineBorder(new Color(0, 102, 204), 2));
-        content.setBackground(new Color(40, 40, 40));
+        JPanel content = new JPanel(new MigLayout(
+                "insets 32, fill",
+                "[grow, center]",
+                "[]14[]10[]24[]"
+        ));
+        content.putClientProperty("FlatLaf.style", "arc: 14; border: 1,1,1,1,#94A3B8,,14");
 
         JLabel title = new JLabel(APP_NAME, SwingConstants.CENTER);
-        title.setFont(new Font("Serif", Font.BOLD, 36));
-        title.setForeground(new Color(0, 102, 204));
+        title.putClientProperty("FlatLaf.styleClass", "h1");
+        title.setForeground(AppUi.BRAND_BLUE);
 
         JLabel version = new JLabel("Version " + APP_VERSION, SwingConstants.CENTER);
-        version.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        version.setForeground(Color.LIGHT_GRAY);
+        version.putClientProperty("FlatLaf.styleClass", "large");
 
         JLabel loading = new JLabel("Loading...", SwingConstants.CENTER);
-        loading.setFont(new Font("SansSerif", Font.ITALIC, 12));
-        loading.setForeground(Color.LIGHT_GRAY);
+        loading.putClientProperty("FlatLaf.styleClass", "small");
 
-        JPanel centerPanel = new JPanel(new GridLayout(3, 1));
-        centerPanel.setBackground(new Color(40, 40, 40));
-        centerPanel.add(title);
-        centerPanel.add(version);
-        centerPanel.add(loading);
+        JProgressBar progress = new JProgressBar();
+        progress.setIndeterminate(true);
 
-        content.add(centerPanel, BorderLayout.CENTER);
+        content.add(title, "growx, wrap");
+        content.add(version, "growx, wrap");
+        content.add(loading, "growx, wrap");
+        content.add(progress, "w 260!, growx");
+
         splashScreen.setContentPane(content);
+        splashScreen.pack();
+        splashScreen.setLocationRelativeTo(null);
         splashScreen.setVisible(true);
 
         // Close the splash screen after 2 seconds
@@ -107,10 +100,13 @@ public class Main {
     // Static utility methods that might be useful throughout the application
 
     /**
-     * Formats a double value as currency with proper commas and decimal places
+     * Formats a money value as currency with proper commas and decimal places
      */
-    public static String formatCurrency(double amount) {
-        return String.format("$%,.2f", amount);
+    public static String formatCurrency(BigDecimal amount) {
+        NumberFormat currency = NumberFormat.getCurrencyInstance(Locale.US);
+        currency.setMinimumFractionDigits(2);
+        currency.setMaximumFractionDigits(2);
+        return currency.format(UserManager.money(amount));
     }
 
     /**
